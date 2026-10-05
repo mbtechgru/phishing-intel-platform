@@ -1,0 +1,10 @@
+services:
+  phishscope:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+    volumes:
+      - ./cases:/app/cases
+    restart: unless-stopped
