@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PhishScope Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: analyst console. Top bar, KPI strip + intake chart, then case queue (left) beside case workbench (right). */
+:root{
+  --bg:#eef2f6; --panel:#ffffff; --panel-2:#f6f9fb; --ink:#0d1b2a; --ink-2:#44586c; --muted:#6c7f92;
+  --line:#d6e0e8; --accent:#0a6fa8; --accent-soft:#e1f0f8; --accent-ink:#ffffff; --code:#f1f5f8; --code-ink:#1d3a52;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --font-ui:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#06101c; --panel:#0b1a2b; --panel-2:#0e2135; --ink:#e8f2ff; --ink-2:#a6bdd1; --muted:#7690a8;
+  --line:#1c3a55; --accent:#4cc9f0; --accent-soft:#0f2e45; --accent-ink:#04121f; --code:#071423; --code-ink:#b8d7ef; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#06101c; --panel:#0b1a2b; --panel-2:#0e2135; --ink:#e8f2ff; --ink-2:#a6bdd1; --muted:#7690a8;
+  --line:#1c3a55; --accent:#4cc9f0; --accent-soft:#0f2e45; --accent-ink:#04121f; --code:#071423; --code-ink:#b8d7ef; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:14px;line-height:1.45}
+.wrap{max-width:1360px;margin:0 auto;padding-inline:16px;padding-block:0 48px}
+.mono{font-family:var(--font-mono);font-size:12.5px}
+.muted{color:var(--muted)}
+.label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+h1,h2,h3{margin:0;text-wrap:balance}
+h2{font-size:15px;font-weight:600}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,select:focus-visible,textarea:focus-visible,.row:focus-visible,label.drop:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:10;background:var(--panel);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding-block:10px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{flex:none}
+.brand b{font-size:17px;letter-spacing:-.01em}
+.brand .ver{font-family:var(--font-mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+nav{display:flex;gap:4px}
+nav span{padding:6px 10px;border-radius:6px;color:var(--ink-2);font-weight:500}
+nav span.on{background:var(--accent-soft);color:var(--ink)}
+.svc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12px;color:var(--ink-2);background:var(--panel)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
+.demo-flag{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px dashed var(--accent);color:var(--accent);border-radius:4px;padding:2px 7px}
+
+/* intake strip */
+.intake{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;margin-top:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+.drop{display:flex;gap:16px;align-items:center;padding:18px;border:1.5px dashed var(--line);border-radius:var(--r);background:var(--panel);cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+.drop .ico{width:44px;height:44px;border-radius:8px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);flex:none}
+.drop b{display:block;font-size:15px}
+.drop small{color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.kpi{background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.kpi .v{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .s{font-size:12px;color:var(--muted)}
+.left-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+
+/* chart */
+.chart{padding:14px 16px 10px;min-width:0}
+.chart-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:10px;height:10px;border-radius:2px;flex:none}
+.chart-box{position:relative;margin-top:6px}
+.chart-box svg{display:block;width:100%;height:auto;overflow:visible}
+.chart-box text{fill:var(--muted);font-family:var(--font-mono);font-size:10px}
+.grid-l{stroke:var(--line);stroke-width:1}
+.tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 20px rgb(0 0 0 / .18);min-width:150px;z-index:5}
+.tip .t-row{display:flex;align-items:center;gap:6px;justify-content:space-between}
+.tip .t-row span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);font-size:12px;font-weight:500}
+table.data{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+table.data th,table.data td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right}
+table.data th:first-child,table.data td:first-child{text-align:left}
+
+/* main split */
+.main{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:16px;margin-top:16px;align-items:start}
+.queue{overflow:hidden}
+.q-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);gap:8px;flex-wrap:wrap}
+.filters{display:flex;gap:4px;flex-wrap:wrap}
+.filters button{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--ink-2)}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.row{display:grid;grid-template-columns:4px 44px minmax(0,1fr);gap:10px;padding:11px 14px 11px 0;border-bottom:1px solid var(--line);cursor:pointer;background:var(--panel)}
+.row:last-child{border-bottom:0}
+.row:hover{background:var(--panel-2)}
+.row.sel{background:var(--accent-soft)}
+.row .stripe{border-radius:0 3px 3px 0}
+.row .sc{font-family:var(--font-mono);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.row .subj{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-top:2px;flex-wrap:wrap}
+.st{font-size:11px;border-radius:4px;padding:1px 6px;border:1px solid var(--line);color:var(--ink-2);text-transform:capitalize}
+.st.new{border-color:var(--accent);color:var(--accent)}
+
+/* case workbench */
+.case{min-width:0;display:flex;flex-direction:column;gap:16px}
+.case-head{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.case-title{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.case-title h1{font-size:20px;font-weight:600;line-height:1.3;max-width:62ch}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:13px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:var(--panel);padding:6px 11px;font-size:12.5px;color:var(--ink-2);border-right:1px solid var(--line);text-transform:capitalize}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.sev{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.sec{padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.sec-h{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* risk meter */
+.risk{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.risk .num{font-size:48px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.risk .num small{font-size:16px;color:var(--muted);font-weight:500}
+.meter{flex:1;min-width:200px}
+.meter-track{position:relative;height:10px;display:grid;grid-template-columns:30fr 30fr 20fr 20fr;gap:2px}
+.meter-track i{display:block;border-radius:2px;opacity:.28}
+.meter-track i.on{opacity:1}
+.meter-mark{position:absolute;top:-5px;width:3px;height:20px;background:var(--ink);border-radius:2px;transform:translateX(-50%)}
+.meter-ticks{position:relative;height:16px;margin-top:4px;font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.meter-ticks span{position:absolute;transform:translateX(-50%)}
+.meter-ticks span:first-child{transform:none}
+.meter-ticks span:last-child{transform:translateX(-100%)}
+
+.signals{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.signals li{display:grid;grid-template-columns:minmax(0,1fr) 48px;gap:10px;padding:7px 0;border-top:1px solid var(--line);align-items:center}
+.signals li:first-child{border-top:0}
+.signals .pts{font-family:var(--font-mono);text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.signals .cap{font-size:11px;color:var(--muted);text-align:right}
+
+.auth{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.auth div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.auth b{font-family:var(--font-mono);font-size:12px}
+.res{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:600;text-transform:uppercase}
+.addr{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;font-size:13px}
+.addr span:nth-child(odd){color:var(--muted)}
+.addr .mono{overflow-wrap:anywhere}
+.mismatch{color:var(--ink);background:color-mix(in srgb,var(--crit) 16%,transparent);border-radius:3px;padding:0 3px}
+
+.mitre{display:flex;flex-wrap:wrap;gap:6px}
+.mitre a{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12.5px;color:var(--ink);text-decoration:none}
+.mitre a:hover{border-color:var(--accent)}
+.mitre a b{font-family:var(--font-mono);font-weight:600;color:var(--accent)}
+
+/* IOC table */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tabs button{border:0;background:none;padding:8px 10px;font-size:13px;color:var(--ink-2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.tabs .n{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:4px}
+.scroll{overflow-x:auto}
+table.ioc{border-collapse:collapse;width:100%;font-size:12.5px}
+table.ioc td,table.ioc th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.ioc th{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+table.ioc td.mono{overflow-wrap:anywhere;min-width:180px}
+.copy{border:1px solid var(--line);background:var(--panel);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--ink-2);white-space:nowrap}
+.copy:hover{border-color:var(--accent);color:var(--accent)}
+
+/* enrichment */
+.btn{border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);border-radius:7px;padding:7px 12px;font-weight:600;font-size:13px}
+.btn.ghost{background:var(--panel);color:var(--accent)}
+.btn:disabled{opacity:.6;cursor:progress}
+.intel{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.intel .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.intel .card .mono{overflow-wrap:anywhere}
+.intel .src{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.age{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.empty{border:1px dashed var(--line);border-radius:8px;padding:14px;color:var(--muted);font-size:13px}
+
+pre.code{margin:0;background:var(--code);color:var(--code-ink);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:var(--font-mono);font-size:12px;line-height:1.55;overflow:auto;max-height:340px;white-space:pre}
+
+/* notes */
+.notes{display:flex;flex-direction:column;gap:10px}
+.note{border-left:2px solid var(--line);padding-left:10px}
+.note .when{font-size:11.5px;color:var(--muted);font-family:var(--font-mono)}
+textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:inherit}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:8px 14px;border-radius:8px;font-size:13px;z-index:20}
+.foot{margin-top:24px;font-size:12px;color:var(--muted);max-width:80ch}
+
+@media (max-width:1040px){.intake{grid-template-columns:1fr}.main{grid-template-columns:1fr}}
+@media (max-width:720px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}nav{display:none}.svc{margin-left:0}.auth{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+</head><body style="margin:0">
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="5" width="24" height="16" rx="3" style="fill:none;stroke:var(--accent)" stroke-width="2"/><path d="M2 7l11 8 11-8" style="fill:none;stroke:var(--accent)" stroke-width="2"/><circle cx="20" cy="19" r="5" style="fill:var(--panel);stroke:var(--ink)" stroke-width="2"/><path d="M23.5 22.5L26 25" style="stroke:var(--ink)" stroke-width="2"/></svg>
+      <b>PhishScope</b><span class="ver">v0.2.0</span>
+    </div>
+    <nav aria-label="Sections"><span class="on">Cases</span><span>Intelligence</span><span>Detections</span></nav>
+    <div class="svc" aria-label="Service status">
+      <span class="chip"><span class="dot" style="background:var(--good)"></span>RDAP</span>
+      <span class="chip"><span class="dot" style="background:var(--good)"></span>crt.sh</span>
+      <span class="chip" title="Set VIRUSTOTAL_API_KEY in .env to enable"><span class="dot"></span>VirusTotal off</span>
+      <span class="demo-flag">Demo data</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="intake">
+    <div class="left-stack">
+      <label class="drop" id="drop" for="file">
+        <input type="file" id="file" accept=".eml,message/rfc822">
+        <span class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg></span>
+        <span><b>Drop a suspicious .eml to open a case</b><small>Parsed in this browser for the demo. Nothing leaves the page. In production the file is preserved under <span class="mono">cases/&lt;case-id&gt;/original.eml</span> with its SHA-256.</small></span>
+      </label>
+      <div class="kpis" id="kpis"></div>
+    </div>
+    <div class="panel chart">
+      <div class="chart-head">
+        <h2>Reported emails, last 14 days</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="chart-box" id="chart"></div>
+      <div style="display:flex;justify-content:flex-end"><button class="linkbtn" id="tblToggle" aria-expanded="false">Show as table</button></div>
+      <div id="chartTable" class="scroll" hidden></div>
+    </div>
+  </section>
+
+  <section class="main">
+    <aside class="panel queue" aria-label="Case queue">
+      <div class="q-head">
+        <h2>Case queue <span class="muted mono" id="qcount"></span></h2>
+        <div class="filters" id="filters"></div>
+      </div>
+      <div id="queue"></div>
+    </aside>
+    <section class="case" id="case" aria-live="polite"></section>
+  </section>
+
+  <p class="foot">PhishScope performs local evidence analysis and passive intelligence collection only. It does not scan, exploit or credential-test third-party infrastructure. All cases, domains and addresses on this page are fictional samples using reserved <span class="mono">.example</span> domains and documentation IP ranges. Generated Sigma and YARA rules are starting points to review and tune before deployment.</p>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function(){
+const SEV={critical:{c:'var(--crit)',label:'Critical',icon:'▲'},high:{c:'var(--serious)',label:'High',icon:'◆'},medium:{c:'var(--warn)',label:'Medium',icon:'●'},low:{c:'var(--good)',label:'Low',icon:'▼'}};
+const SEV_ORDER=['critical','high','medium','low'];
+const STATUSES=['new','investigating','contained','closed'];
+const E=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const defang=s=>String(s).replace(/^http/i,'hxxp').replace(/\./g,'[.]');
+const $=s=>document.querySelector(s);
+
+/* Scoring mirrors backend/app/main.py parse_eml() */
+function domainOf(v){const m=String(v||'').match(/<?([^<>\s"]+@[^<>\s"]+)>?\s*$/);return m?m[1].split('@').pop().toLowerCase():''}
+function score(c){
+  const sig=[];const fd=domainOf(c.from),rd=domainOf(c.replyTo);
+  if(rd&&fd&&rd!==fd)sig.push({t:`Reply-To domain differs from From (${fd} → ${rd})`,p:25});
+  [['spf',20],['dkim',20],['dmarc',25]].forEach(([m,p])=>{if(c.auth[m]==='fail')sig.push({t:`${m.toUpperCase()} failed`,p})});
+  if(c.urls.length)sig.push({t:`${c.urls.length} URL(s) found`,p:Math.min(15,c.urls.length*3),cap:'3 each, max 15'});
+  if(c.attachments.length)sig.push({t:`${c.attachments.length} attachment(s) found`,p:Math.min(20,c.attachments.length*8),cap:'8 each, max 20'});
+  const raw=sig.reduce((a,s)=>a+s.p,0),s=Math.min(100,raw);
+  const sev=s>=80?'critical':s>=60?'high':s>=30?'medium':'low';
+  const mitre=[{id:'T1566',name:'Phishing'}];
+  if(c.urls.length)mitre.push({id:'T1566.002',name:'Spearphishing Link'});
+  if(c.attachments.length)mitre.push({id:'T1566.001',name:'Spearphishing Attachment'});
+  if(c.urls.length||c.attachments.length)mitre.push({id:'T1204',name:'User Execution'});
+  const domains=[...new Set(c.urls.map(u=>{try{return new URL(u).hostname.toLowerCase()}catch{return null}}).filter(Boolean))].sort();
+  return Object.assign(c,{signals:sig,raw,risk:s,severity:sev,mitre,domains});
+}
+
+const hex=n=>[...crypto.getRandomValues(new Uint8Array(n))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const fakeHash=seed=>{let h='',x=0;for(const ch of seed)x=(x*31+ch.charCodeAt(0))>>>0;for(let i=0;i<64;i++){x=(x*1103515245+12345)>>>0;h+=(x>>>24&15).toString(16)}return h};
+
+const CASES=[
+ {id:'20261005-a3f91c2e',file:'payroll-deposit-update.eml',received:'2026-10-05T08:14:22Z',status:'investigating',
+  subject:'Action required: confirm direct deposit details before the Oct 10 payroll run',
+  from:'"HR Payroll" <payroll@hr-payroll-portal.example>',replyTo:'payroll-desk@mailbox-relay.example.net',to:'j.alvarez@corp.example',
+  auth:{spf:'fail',dkim:'fail',dmarc:'fail'},
+  urls:['https://hr-payroll-portal.example/verify?emp=48213','https://cdn.hr-payroll-portal.example/assets/form.js'],
+  ips:['203.0.113.47'],attachments:[{name:'Payroll_Update_Form.html',type:'text/html',size:18432}],
+  notes:[{at:'2026-10-05T08:31:10Z',who:'C. Marrero',t:'Reported by recipient through the report button. Two other recipients in Finance received the same lure.'}]},
+ {id:'20261005-7be20d14',file:'q3-vendor-remittance.eml',received:'2026-10-05T07:02:51Z',status:'new',
+  subject:'Shared file: Q3 vendor remittance.pdf',
+  from:'"Document Share" <docs@secure-docs-share.example>',replyTo:'',to:'ap-team@corp.example',
+  auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
+  urls:['https://secure-docs-share.example/s/9f2KqL','https://secure-docs-share.example/login','https://files.secure-docs-share.example/view/remit_q3'],
+  ips:['198.51.100.23'],attachments:[{name:'Remittance_Q3.zip',type:'application/zip',size:44120}],notes:[]},
+ {id:'20261004-19d0f6b3',file:'invoice-inv-20931.eml',received:'2026-10-04T15:40:09Z',status:'contained',
+  subject:'Invoice INV-20931 is 14 days overdue',
+  from:'"Northwind Accounts" <accounts@northwind-billing.example>',replyTo:'billing@invoice-vault.example.net',to:'m.chen@corp.example',
+  auth:{spf:'pass',dkim:'pass',dmarc:'fail'},
+  urls:[],ips:['192.0.2.188'],attachments:[{name:'INV-20931.xlsm',type:'application/vnd.ms-excel.sheet.macroEnabled.12',size:61204},{name:'INV-20931.pdf',type:'application/pdf',size:120880}],
+  notes:[{at:'2026-10-04T16:05:44Z',who:'C. Marrero',t:'Macro-enabled workbook. Sender domain blocked at the gateway; 3 copies purged from mailboxes.'}]},
+ {id:'20261004-c51e8a90',file:'mailbox-quota.eml',received:'2026-10-04T11:17:36Z',status:'new',
+  subject:'Your mailbox is 98% full. Messages will be held after 24 hours',
+  from:'"IT Helpdesk" <it-helpdesk@corp-sso-verify.example>',replyTo:'it-helpdesk@corp-sso-verify.example',to:'r.okafor@corp.example',
+  auth:{spf:'fail',dkim:'none',dmarc:'fail'},
+  urls:['https://corp-sso-verify.example/owa/quota'],ips:[],attachments:[],notes:[]},
+ {id:'20261002-4d6c0b71',file:'nda-esignature.eml',received:'2026-10-02T13:55:02Z',status:'contained',
+  subject:'E-signature requested: Mutual NDA revision 3',
+  from:'"eSign Review" <sign@esign-review.example>',replyTo:'support@esign-review.example.net',to:'legal@corp.example',
+  auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
+  urls:['https://esign-review.example/envelope/77ac1','https://esign-review.example/auth'],ips:['203.0.113.9'],attachments:[],notes:[]},
+ {id:'20261001-e8a27f55',file:'offsite-agenda.eml',received:'2026-10-01T09:20:13Z',status:'closed',
+  subject:'Team offsite agenda and parking details',
+  from:'"Dana Whitfield" <d.whitfield@corp.example>',replyTo:'',to:'eng-all@corp.example',
+  auth:{spf:'pass',dkim:'pass',dmarc:'pass'},
+  urls:['https://intranet.corp.example/events/offsite-2026'],ips:[],attachments:[],
+  notes:[{at:'2026-10-01T09:48:00Z',who:'C. Marrero',t:'Benign. Internal sender, authentication passes. Closed as false report.'}]},
+].map(c=>{c.sha=fakeHash(c.id);c.attachments.forEach(a=>a.sha=fakeHash(c.id+a.name));return score(c)});
+
+/* Passive enrichment samples, keyed by domain */
+const INTEL={
+ 'hr-payroll-portal.example':{created:'2026-09-29',registrar:'Example Registrar, LLC',status:['clientTransferProhibited'],ns:['ns1.fastpark-dns.example','ns2.fastpark-dns.example'],ct:['hr-payroll-portal.example','cdn.hr-payroll-portal.example','login.hr-payroll-portal.example']},
+ 'cdn.hr-payroll-portal.example':{parent:'hr-payroll-portal.example'},
+ 'secure-docs-share.example':{created:'2026-09-21',registrar:'Example Registrar, LLC',status:['ok'],ns:['ns-a.cheapdns.example','ns-b.cheapdns.example'],ct:['secure-docs-share.example','files.secure-docs-share.example','www.secure-docs-share.example']},
+ 'files.secure-docs-share.example':{parent:'secure-docs-share.example'},
+ 'corp-sso-verify.example':{created:'2026-10-02',registrar:'Registrar Sample Inc.',status:['clientHold'],ns:['ns1.bulletdns.example'],ct:['corp-sso-verify.example','owa.corp-sso-verify.example']},
+ 'esign-review.example':{created:'2026-08-30',registrar:'Example Registrar, LLC',status:['ok'],ns:['ns1.fastpark-dns.example'],ct:['esign-review.example','www.esign-review.example']},
+ 'intranet.corp.example':{created:'2009-04-14',registrar:'Enterprise Registrar Co.',status:['serverTransferProhibited'],ns:['ns1.corp.example','ns2.corp.example'],ct:['corp.example','intranet.corp.example','mail.corp.example']},
+};
+const TODAY=new Date('2026-10-05T12:00:00Z');
+const ageDays=d=>Math.round((TODAY-new Date(d+'T00:00:00Z'))/864e5);
+
+/* 14-day intake history (sample) */
+const HIST=[[0,1,3,4],[1,1,2,5],[0,2,2,3],[0,0,1,2],[0,1,1,2],[1,2,4,3],[0,1,3,6],[2,3,2,4],[0,1,2,3],[0,0,1,1],[1,1,2,2],[0,2,3,4],[0,1,1,2],[1,1,0,0]]
+ .map((v,i)=>{const d=new Date(TODAY);d.setUTCDate(d.getUTCDate()-13+i);return{d,critical:v[0],high:v[1],medium:v[2],low:v[3]}});
+// fold the live queue's per-day counts into the last days so the chart and queue agree
+function syncHist(){
+  HIST.forEach(h=>{h.extra={critical:0,high:0,medium:0,low:0}});
+  CASES.filter(c=>c.uploaded).forEach(c=>{const h=HIST[HIST.length-1];h.extra[c.severity]++});
+}
+
+let state={sel:CASES[0].id,filter:'all',iocTab:'urls',detTab:'sigma',enriched:{}};
+try{const f=localStorage.getItem('ps-filter');if(f)state.filter=f}catch{}
+
+function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,1800)}
+async function copy(text,btn){try{await navigator.clipboard.writeText(text);toast('Copied')}catch{const r=document.createRange();const n=btn.closest('tr')?.querySelector('.mono')||btn.parentElement;r.selectNodeContents(n);const s=getSelection();s.removeAllRanges();s.addRange(r);toast('Press ⌘C / Ctrl+C to copy')}}
+const fmtTime=iso=>new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'UTC'})+' UTC';
+const sevTag=s=>`<span class="sev"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span>${SEV[s].label}</span>`;
+
+/* KPIs */
+function renderKpis(){
+  const open=CASES.filter(c=>c.status!=='closed');
+  const hot=open.filter(c=>c.severity==='critical'||c.severity==='high').length;
+  const iocs=CASES.reduce((a,c)=>a+c.urls.length+c.domains.length+c.ips.length+c.attachments.length,0);
+  const fails=CASES.filter(c=>c.auth.dmarc==='fail').length;
+  $('#kpis').innerHTML=[
+    ['Open cases',open.length,`${CASES.filter(c=>c.status==='new').length} awaiting triage`],
+    ['Critical + high',hot,'open, by risk score'],
+    ['Indicators',iocs,'URLs, domains, IPs, hashes'],
+    ['DMARC failures',`${fails}/${CASES.length}`,'of cases in queue'],
+  ].map(([l,v,s])=>`<div class="kpi"><span class="label">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join('');
+}
+
+/* Stacked bar chart */
+function renderChart(){
+  syncHist();
+  const W=560,H=190,pl=26,pr=6,pt=8,pb=22,iw=W-pl-pr,ih=H-pt-pb;
+  const tot=h=>SEV_ORDER.reduce((a,k)=>a+h[k]+h.extra[k],0);
+  const max=Math.max(...HIST.map(tot));const top=Math.ceil(max/4)*4||4;
+  const y=v=>pt+ih-(v/top)*ih;const bw=iw/HIST.length;const barW=Math.min(22,bw*.62);
+  let g='';
+  for(let t=0;t<=top;t+=top/4){g+=`<line class="grid-l" x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}"/><text x="${pl-6}" y="${y(t)+3}" text-anchor="end">${t}</text>`}
+  HIST.forEach((h,i)=>{
+    const x=pl+i*bw+(bw-barW)/2;let acc=0;const segs=[...SEV_ORDER].reverse();
+    const vals=segs.map(k=>[k,h[k]+h.extra[k]]).filter(v=>v[1]>0);
+    vals.forEach(([k,v],j)=>{
+      const y0=y(acc),y1=y(acc+v);acc+=v;const isTop=j===vals.length-1;const gap=j>0?2:0;
+      const hgt=Math.max(0,y0-y1-gap);
+      g+=isTop?`<path d="M${x},${y0-gap} V${y1+4} q0,-4 4,-4 h${barW-8} q4,0 4,4 V${y0-gap} Z" style="fill:${SEV[k].c}"/>`
+              :`<rect x="${x}" y="${y1}" width="${barW}" height="${hgt}" style="fill:${SEV[k].c}"/>`;
+    });
+    if(i%2===1||i===HIST.length-1)g+=`<text x="${x+barW/2}" y="${H-6}" text-anchor="middle">${h.d.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'})}</text>`;
+    g+=`<rect data-i="${i}" x="${pl+i*bw}" y="${pt}" width="${bw}" height="${ih}" fill="transparent" class="hit"/>`;
+  });
+  const box=$('#chart');
+  box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Stacked bars of reported emails per day by severity">${g}</svg><div class="tip" hidden></div>`;
+  const tip=box.querySelector('.tip');
+  box.querySelectorAll('.hit').forEach(r=>{
+    const show=()=>{const h=HIST[r.dataset.i];
+      tip.innerHTML=`<div style="font-weight:600;margin-bottom:4px">${h.d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})} · ${tot(h)} reports</div>`+SEV_ORDER.map(k=>`<div class="t-row"><span style="display:inline-flex;gap:6px;align-items:center"><span class="sw" style="background:${SEV[k].c}"></span>${SEV[k].label}</span><span>${h[k]+h.extra[k]}</span></div>`).join('');
+      tip.hidden=false;const bb=box.getBoundingClientRect(),rb=r.getBoundingClientRect();
+      let left=rb.left-bb.left+rb.width/2-80;left=Math.max(0,Math.min(left,bb.width-170));tip.style.left=left+'px';tip.style.top='0px';
+      box.querySelectorAll('.hit').forEach(o=>o.style.fill='transparent');r.style.fill='color-mix(in srgb, var(--ink) 7%, transparent)';};
+    r.addEventListener('mouseenter',show);r.addEventListener('click',show);
+  });
+  box.addEventListener('mouseleave',()=>{tip.hidden=true;box.querySelectorAll('.hit').forEach(o=>o.style.fill='transparent')});
+  $('#legend').innerHTML=SEV_ORDER.map(k=>`<span><span class="sw" style="background:${SEV[k].c}"></span>${SEV[k].label}</span>`).join('');
+  $('#chartTable').innerHTML=`<table class="data"><thead><tr><th>Date</th>${SEV_ORDER.map(k=>`<th>${SEV[k].label}</th>`).join('')}<th>Total</th></tr></thead><tbody>${HIST.map(h=>`<tr><td>${h.d.toISOString().slice(0,10)}</td>${SEV_ORDER.map(k=>`<td>${h[k]+h.extra[k]}</td>`).join('')}<td>${tot(h)}</td></tr>`).join('')}</tbody></table>`;
+}
+$('#tblToggle').addEventListener('click',e=>{const t=$('#chartTable');t.hidden=!t.hidden;e.target.textContent=t.hidden?'Show as table':'Hide table';e.target.setAttribute('aria-expanded',String(!t.hidden))});
+
+/* Queue */
+function renderQueue(){
+  const opts=[['all','All'],['open','Open'],['critical','Critical'],['high','High']];
+  $('#filters').innerHTML=opts.map(([k,l])=>`<button data-f="${k}" aria-pressed="${state.filter===k}">${l}</button>`).join('');
+  $('#filters').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.filter=b.dataset.f;try{localStorage.setItem('ps-filter',state.filter)}catch{};renderQueue()});
+  const list=CASES.filter(c=>state.filter==='all'||(state.filter==='open'?c.status!=='closed':c.severity===state.filter))
+    .sort((a,b)=>b.received.localeCompare(a.received));
+  $('#qcount').textContent=`${list.length}`;
+  $('#queue').innerHTML=list.length?list.map(c=>`<div class="row${c.id===state.sel?' sel':''}" tabindex="0" role="button" data-id="${c.id}" aria-label="${E(c.subject)}">
+      <span class="stripe" style="background:${SEV[c.severity].c}"></span>
+      <span class="sc">${c.risk}</span>
+      <span style="min-width:0"><div class="subj">${E(c.subject)}</div>
+      <div class="meta"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${c.id}</span><span class="st ${c.status}">${c.status}</span><span>${fmtTime(c.received)}</span>${c.uploaded?'<span class="st new">uploaded</span>':''}</div></span>
+    </div>`).join(''):`<div class="empty" style="margin:14px">No cases match this filter.</div>`;
+  $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>{state.sel=r.dataset.id;state.iocTab='urls';renderQueue();renderCase()};r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
+}
+
+/* Detection artifacts — formats mirror sigma_for / yara_for / stix_bundle */
+function sigma(c){
+  return `title: PhishScope Case ${c.id}
+id: ${c.uuid||(c.uuid=crypto.randomUUID?crypto.randomUUID():hex(16))}
+status: experimental
+description: Indicators generated from an authorized defensive phishing investigation
+logsource:
+  category: email
+detection:
+  selection:
+    sender|contains:
+      - ${JSON.stringify(c.from)}
+    url_domain|contains:
+${c.domains.length?c.domains.map(d=>'      - '+JSON.stringify(d)).join('\n'):'      - "none"'}
+  condition: selection
+falsepositives:
+  - Legitimate messages sharing infrastructure
+level: ${c.severity}`;
+}
+function yara(c){
+  let s=c.domains.slice(0,20).map((d,i)=>`    $domain${i} = "${d}" ascii nocase`).concat(c.attachments.slice(0,20).map((a,i)=>`    $hash${i} = "${a.sha}" ascii`));
+  if(!s.length)s=[`    $case = "${c.id}" ascii`];
+  return `rule PhishScope_${c.id.replace(/[^A-Za-z0-9_]/g,'_')} {
+  meta:
+    description = "Indicators from defensive PhishScope case"
+  strings:
+${s.join('\n')}
+  condition:
+    any of them
+}`;
+}
+function stix(c){
+  const now=new Date().toISOString().replace(/\.\d+Z$/,'Z');const id=()=>crypto.randomUUID?crypto.randomUUID():hex(16);
+  const ind=(name,pattern)=>({type:'indicator',spec_version:'2.1',id:'indicator--'+id(),created:now,modified:now,name,pattern_type:'stix',pattern,valid_from:now});
+  return JSON.stringify({type:'bundle',id:'bundle--'+id(),objects:[...c.domains.map(d=>ind('PhishScope domain indicator',`[domain-name:value = '${d}']`)),...c.ips.map(ip=>ind('PhishScope IP indicator',`[ipv4-addr:value = '${ip}']`))]},null,2);
+}
+
+function authCell(k,v){const m={pass:['var(--good)','✓'],fail:['var(--crit)','✕'],none:['var(--muted)','–'],softfail:['var(--warn)','!']}[v]||['var(--muted)','?'];
+  return `<div><b>${k.toUpperCase()}</b><span class="res"><span aria-hidden="true" style="color:${m[0]}">${m[1]}</span>${E(v)}</span></div>`}
+
+function intelCard(d){
+  const x=INTEL[d];const root=x&&x.parent?INTEL[x.parent]:x;const rn=x&&x.parent?x.parent:d;
+  if(!root)return `<div class="card"><div class="src"><span>${E(defang(d))}</span></div><span class="muted">No RDAP record returned. Domain may be unregistered or rate-limited.</span></div>`;
+  const age=ageDays(root.created);const young=age<30;
+  return `<div class="card">
+    <div class="src"><span>RDAP</span><span>${young?'<span style="color:var(--crit)">▲</span> newly registered':'established'}</span></div>
+    <div class="mono">${E(defang(rn))}</div>
+    <div><span class="age">${age}</span> <span class="muted">days old · registered ${root.created}</span></div>
+    <div class="muted" style="font-size:12px">${E(root.registrar)} · ${root.status.map(E).join(', ')}</div>
+    <div class="mono muted" style="font-size:11.5px">NS ${root.ns.map(n=>E(defang(n))).join(', ')}</div>
+    <div class="src" style="margin-top:4px"><span>crt.sh</span><span>${root.ct.length} names</span></div>
+    <div class="mono" style="font-size:11.5px">${root.ct.map(n=>E(defang(n))).join('<br>')}</div>
+  </div>`;
+}
+
+/* Case workbench */
+function renderCase(){
+  const c=CASES.find(x=>x.id===state.sel);if(!c){$('#case').innerHTML='';return}
+  const fd=domainOf(c.from),rd=domainOf(c.replyTo),mis=rd&&fd&&rd!==fd;
+  const pos=c.risk;
+  const iocRows={
+    urls:c.urls.map(u=>[defang(u),u]),
+    domains:c.domains.map(d=>[defang(d),d]),
+    ips:c.ips.map(i=>[defang(i),i]),
+    files:c.attachments.map(a=>[`${a.sha}`,a.sha,`${E(a.name)} · ${E(a.type)} · ${(a.size/1024).toFixed(1)} KB`]),
+  };
+  const tabs=[['urls','URLs'],['domains','Domains'],['ips','IPs'],['files','Attachments']];
+  const rows=iocRows[state.iocTab];
+  const enr=state.enriched[c.id];
+  const det={sigma:sigma(c),yara:yara(c),stix:stix(c)};
+  $('#case').innerHTML=`
+  <div class="panel case-head">
+    <div class="case-title">
+      <div style="min-width:0;display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${sevTag(c.severity)}<span class="mono muted">Case ${c.id}</span></div>
+        <h1>${E(c.subject)}</h1>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+        <span class="label">Case status</span>
+        <div class="seg" id="statusSeg">${STATUSES.map(s=>`<button data-s="${s}" aria-pressed="${c.status===s}">${s}</button>`).join('')}</div>
+      </div>
+    </div>
+    <dl class="kv">
+      <dt>Received</dt><dd>${fmtTime(c.received)} · reported to <span class="mono">${E(c.to)}</span></dd>
+      <dt>Evidence</dt><dd><span class="mono">cases/${c.id}/original.eml</span> · ${E(c.file)}</dd>
+      <dt>SHA-256</dt><dd class="mono">${c.sha}</dd>
+    </dl>
+  </div>
+
+  <div class="grid2">
+    <div class="panel sec">
+      <div class="sec-h"><h2>Risk score</h2><span class="muted" style="font-size:12px">raw ${c.raw} pts, capped at 100</span></div>
+      <div class="risk">
+        <div class="num">${c.risk}<small> /100</small></div>
+        <div class="meter" aria-label="Risk ${c.risk} of 100, ${SEV[c.severity].label}">
+          <div class="meter-track">${['low','medium','high','critical'].map(k=>`<i class="${c.severity===k?'on':''}" style="background:${SEV[k].c}"></i>`).join('')}<span class="meter-mark" style="left:${pos}%"></span></div>
+          <div class="meter-ticks"><span style="left:0">0</span><span style="left:30%">30</span><span style="left:60%">60</span><span style="left:80%">80</span><span style="left:100%">100</span></div>
+        </div>
+      </div>
+      <ul class="signals">${c.signals.length?c.signals.map(s=>`<li><span>${E(s.t)}${s.cap?` <span class="cap">(${s.cap})</span>`:''}</span><span class="pts">+${s.p}</span></li>`).join(''):'<li><span class="muted">No phishing signals matched.</span><span class="pts">0</span></li>'}</ul>
+    </div>
+    <div class="panel sec">
+      <h2>Sender authentication</h2>
+      <div class="auth">${['spf','dkim','dmarc'].map(k=>authCell(k,c.auth[k])).join('')}</div>
+      <div class="addr">
+        <span>From</span><span class="mono">${E(c.from).replace(E(fd),mis?`<span class="mismatch">${E(fd)}</span>`:E(fd))}</span>
+        <span>Reply-To</span><span class="mono">${c.replyTo?(mis?E(c.replyTo).replace(E(rd),`<span class="mismatch">${E(rd)}</span>`):E(c.replyTo)):'<span class="muted">not set</span>'}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px"><span class="label">MITRE ATT&amp;CK</span>
+        <div class="mitre">${c.mitre.map(m=>`<a href="https://attack.mitre.org/techniques/${m.id.replace('.','/')}/" target="_blank" rel="noopener"><b>${m.id}</b>${m.name}</a>`).join('')}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Indicators of compromise</h2><span class="muted" style="font-size:12px">Defanged for safe handling. Copy gives the raw value.</span></div>
+    <div class="tabs" role="tablist">${tabs.map(([k,l])=>`<button role="tab" data-t="${k}" aria-selected="${state.iocTab===k}">${l}<span class="n">${iocRows[k].length}</span></button>`).join('')}</div>
+    <div class="scroll">${rows.length?`<table class="ioc"><thead><tr><th>${state.iocTab==='files'?'SHA-256':'Value'}</th>${state.iocTab==='files'?'<th>File</th>':''}<th></th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${E(r[0])}</td>${r[2]?`<td>${r[2]}</td>`:''}<td style="text-align:right"><button class="copy" data-v="${E(r[1])}">Copy</button></td></tr>`).join('')}</tbody></table>`:`<div class="empty" style="margin-top:10px">None extracted from this message.</div>`}</div>
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Passive enrichment</h2>
+      <button class="btn${enr?' ghost':''}" id="enrichBtn" ${c.domains.length?'':'disabled'}>${enr?'Re-run enrichment':'Run passive enrichment'}</button></div>
+    ${!c.domains.length?`<div class="empty">No domains to enrich. This message carries no URLs.</div>`:
+      enr?`<div class="intel">${c.domains.map(intelCard).join('')}</div>
+        <div class="muted" style="font-size:12px">VirusTotal reputation skipped: <span class="mono">VIRUSTOTAL_API_KEY</span> not configured.</div>`
+      :`<div class="empty">Queries RDAP for registration data and crt.sh for certificate transparency names on ${c.domains.length} domain${c.domains.length>1?'s':''}. No traffic is sent to the suspect infrastructure.</div>`}
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Detection content</h2><button class="copy" id="copyDet">Copy ${state.detTab.toUpperCase()}</button></div>
+    <div class="tabs" role="tablist">${[['sigma','Sigma rule'],['yara','YARA rule'],['stix','STIX 2.1 bundle']].map(([k,l])=>`<button role="tab" data-d="${k}" aria-selected="${state.detTab===k}">${l}</button>`).join('')}</div>
+    <pre class="code" id="detCode">${E(det[state.detTab])}</pre>
+  </div>
+
+  <div class="panel sec">
+    <h2>Analyst notes</h2>
+    <div class="notes">${c.notes.length?c.notes.map(n=>`<div class="note"><div class="when">${fmtTime(n.at)} · ${E(n.who)}</div><div>${E(n.t)}</div></div>`).join(''):'<div class="muted">No notes yet.</div>'}</div>
+    <form id="noteForm" style="display:flex;flex-direction:column;gap:8px">
+      <label for="noteText" class="label">Add a note</label>
+      <textarea id="noteText" placeholder="What did you check, and what did you decide?"></textarea>
+      <div><button class="btn" type="submit">Add note</button></div>
+    </form>
+  </div>`;
+
+  $('#statusSeg').querySelectorAll('button').forEach(b=>b.onclick=()=>{c.status=b.dataset.s;renderAll();toast(`Status set to ${c.status}`)});
+  document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{state.iocTab=b.dataset.t;renderCase()});
+  document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{state.detTab=b.dataset.d;renderCase()});
+  document.querySelectorAll('.copy[data-v]').forEach(b=>b.onclick=()=>copy(b.dataset.v,b));
+  $('#copyDet').onclick=e=>copy($('#detCode').textContent,$('#detCode'));
+  const eb=$('#enrichBtn');if(eb)eb.onclick=()=>{eb.disabled=true;eb.textContent='Querying RDAP and crt.sh…';setTimeout(()=>{state.enriched[c.id]=true;renderCase();toast('Enrichment complete')},900)};
+  $('#noteForm').onsubmit=e=>{e.preventDefault();const t=$('#noteText').value.trim();if(!t)return;c.notes.push({at:new Date().toISOString(),who:'You',t});renderCase();toast('Note added')};
+}
+
+function renderAll(){renderKpis();renderChart();renderQueue();renderCase()}
+
+/* In-browser .eml parsing (demo stand-in for POST /api/analyze) */
+async function sha256Hex(buf){const h=await crypto.subtle.digest('SHA-256',buf);return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+function splitMsg(raw){const i=raw.search(/\r?\n\r?\n/);const head=i<0?raw:raw.slice(0,i),body=i<0?'':raw.slice(i).replace(/^\r?\n\r?\n/,'');
+  const hdrs={};head.replace(/\r?\n[ \t]+/g,' ').split(/\r?\n/).forEach(l=>{const m=l.match(/^([\w-]+):\s*(.*)$/);if(m){const k=m[1].toLowerCase();hdrs[k]=hdrs[k]?hdrs[k]+'\n'+m[2]:m[2]}});return{hdrs,body}}
+function decodeWord(s){return String(s||'').replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi,(_,cs,enc,t)=>{try{if(enc.toUpperCase()==='B')return new TextDecoder(cs).decode(Uint8Array.from(atob(t),c=>c.charCodeAt(0)));return t.replace(/_/g,' ').replace(/=([0-9A-F]{2})/gi,(_,h)=>String.fromCharCode(parseInt(h,16)))}catch{return t}})}
+const b64bytes=s=>{try{return Uint8Array.from(atob(s.replace(/\s+/g,'')),c=>c.charCodeAt(0))}catch{return new Uint8Array()}};
+const qp=s=>s.replace(/=\r?\n/g,'').replace(/=([0-9A-F]{2})/gi,(_,h)=>String.fromCharCode(parseInt(h,16)));
+async function walk(part,out){
+  const ct=part.hdrs['content-type']||'text/plain';const bm=ct.match(/boundary="?([^";]+)"?/i);
+  if(/^multipart\//i.test(ct)&&bm){
+    const pieces=part.body.split(new RegExp('\\r?\\n?--'+bm[1].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:--)?\\s*\\r?\\n?'));
+    for(const p of pieces.slice(1)){if(p.trim())await walk(splitMsg(p),out)}return;
+  }
+  const cd=part.hdrs['content-disposition']||'';const enc=(part.hdrs['content-transfer-encoding']||'').toLowerCase();
+  const fn=(cd.match(/filename\*?="?([^";]+)"?/i)||ct.match(/name="?([^";]+)"?/i)||[])[1];
+  if(/attachment/i.test(cd)||fn){
+    const bytes=enc==='base64'?b64bytes(part.body):new TextEncoder().encode(part.body);
+    out.attachments.push({name:decodeWord(fn||`attachment-${out.attachments.length+1}.bin`).replace(/[^A-Za-z0-9._-]+/g,'_'),type:ct.split(';')[0].trim(),size:bytes.length,sha:await sha256Hex(bytes)});
+  }else if(/^text\/(plain|html)/i.test(ct)){
+    out.text.push(enc==='base64'?new TextDecoder().decode(b64bytes(part.body)):enc==='quoted-printable'?qp(part.body):part.body);
+  }
+}
+async function analyzeFile(f){
+  if(!/\.eml$/i.test(f.name)){toast('Choose an .eml file');return}
+  if(f.size>20*1024*1024){toast('File too large (20 MB max)');return}
+  const buf=await f.arrayBuffer();const raw=new TextDecoder('latin1').decode(buf);
+  const msg=splitMsg(raw);const out={attachments:[],text:[]};await walk(msg,out);
+  const corpus=Object.values(msg.hdrs).join('\n')+'\n'+out.text.join('\n');
+  const urls=[...new Set((corpus.match(/https?:\/\/[^\s<>"']+/gi)||[]).map(u=>u.replace(/[.,);\]]+$/,'')))].sort();
+  const isPublic=ip=>{const p=ip.split('.').map(Number);if(p.some(n=>n>255))return false;const[a,b]=p;return!(a===10||a===127||a===0||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===169&&b===254)||a>=224)};
+  const ips=[...new Set(corpus.match(/(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])/g)||[])].filter(isPublic).sort();
+  const ar=(msg.hdrs['authentication-results']||'').toLowerCase();
+  const res=m=>{const x=ar.match(new RegExp(m+'=(\\w+)'));return x?x[1]:'none'};
+  const now=new Date();const id=now.toISOString().slice(0,10).replace(/-/g,'')+'-'+hex(4);
+  const c=score({id,file:f.name.replace(/[^A-Za-z0-9._-]+/g,'_'),received:now.toISOString(),status:'new',uploaded:true,
+    subject:decodeWord(msg.hdrs['subject'])||'(no subject)',from:decodeWord(msg.hdrs['from']||''),replyTo:decodeWord(msg.hdrs['reply-to']||''),to:decodeWord(msg.hdrs['to']||'unknown'),
+    auth:{spf:res('spf'),dkim:res('dkim'),dmarc:res('dmarc')},urls,ips,attachments:out.attachments,notes:[],sha:await sha256Hex(buf)});
+  CASES.unshift(c);state.sel=c.id;state.filter='all';state.iocTab='urls';renderAll();toast(`Case ${c.id} opened`);
+  $('#case').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+}
+const drop=$('#drop'),fi=$('#file');
+fi.addEventListener('change',()=>{if(fi.files[0])analyzeFile(fi.files[0]).catch(()=>toast('Could not parse that file as RFC 822 email'));fi.value=''});
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)analyzeFile(f).catch(()=>toast('Could not parse that file as RFC 822 email'))});
+
+renderAll();
+})();
+</script>
+
+</body></html>

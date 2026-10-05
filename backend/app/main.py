@@ -38,16 +38,20 @@ def parse_eml(data: bytes, evidence_dir: Path|None=None):
     urls=sorted(set(x.rstrip('.,);]') for x in URL_RE.findall(text))); domains=sorted(set(urlparse(x).hostname.lower() for x in urls if urlparse(x).hostname))
     ips=sorted(set(x for x in IP_RE.findall(text) if public_ip(x))); auth=headers.get('Authentication-Results',''); flags=[]; score=0
     fd,rd=domain_of_address(headers.get('From')),domain_of_address(headers.get('Reply-To'))
-    if rd and fd and rd != fd: flags.append(f'Reply-To domain differs from From ({fd} → {rd})'); score+=25
+    def flag(text,pts):
+        nonlocal score
+        flags.append(text); signals.append({'text':text,'points':pts}); score+=pts
+    signals=[]
+    if rd and fd and rd != fd: flag(f'Reply-To domain differs from From ({fd} → {rd})',25)
     for mech,pts in [('spf',20),('dkim',20),('dmarc',25)]:
-        if f'{mech}=fail' in auth.lower(): flags.append(f'{mech.upper()} failed'); score+=pts
-    if urls: flags.append(f'{len(urls)} URL(s) found'); score+=min(15,len(urls)*3)
-    if attachments: flags.append(f'{len(attachments)} attachment(s) found'); score+=min(20,len(attachments)*8)
+        if f'{mech}=fail' in auth.lower(): flag(f'{mech.upper()} failed',pts)
+    if urls: flag(f'{len(urls)} URL(s) found',min(15,len(urls)*3))
+    if attachments: flag(f'{len(attachments)} attachment(s) found',min(20,len(attachments)*8))
     mitre=[{'id':'T1566','name':'Phishing'}]
     if urls: mitre.append({'id':'T1566.002','name':'Spearphishing Link'})
     if attachments: mitre.append({'id':'T1566.001','name':'Spearphishing Attachment'})
     if urls or attachments: mitre.append({'id':'T1204','name':'User Execution'})
-    return {'headers':headers,'urls':urls,'domains':domains,'ips':ips,'attachments':attachments,'findings':flags,'risk_score':min(100,score),'severity':('critical' if score>=80 else 'high' if score>=60 else 'medium' if score>=30 else 'low'),'mitre':mitre}
+    return {'headers':headers,'urls':urls,'domains':domains,'ips':ips,'attachments':attachments,'findings':flags,'signals':signals,'raw_score':score,'risk_score':min(100,score),'severity':('critical' if score>=80 else 'high' if score>=60 else 'medium' if score>=30 else 'low'),'mitre':mitre}
 
 def get_case(cid):
     p=CASES/cid/'report.json'
@@ -107,7 +111,9 @@ def cases():
     out=[]
     for f in sorted(CASES.glob('*/report.json'),reverse=True):
         try:
-            r=json.loads(f.read_text()); out.append({k:r.get(k) for k in ('case_id','filename','created_utc','risk_score','severity','status')})
+            r=json.loads(f.read_text()); h=r.get('headers',{}); row={k:r.get(k) for k in ('case_id','filename','created_utc','risk_score','severity','status')}
+            m=re.search(r'dmarc=(\w+)',h.get('Authentication-Results','').lower())
+            row.update({'subject':h.get('Subject',''),'sender':h.get('From',''),'dmarc':m.group(1) if m else 'none','ioc_count':sum(len(r.get(k,[])) for k in ('urls','domains','ips','attachments'))}); out.append(row)
         except: pass
     return out
 @app.get('/api/cases/{case_id}')
