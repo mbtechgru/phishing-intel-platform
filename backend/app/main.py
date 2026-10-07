@@ -71,9 +71,15 @@ def http_json(url, headers=None, timeout=8):
     req=urllib.request.Request(url,headers={'User-Agent':'PhishScope/'+VERSION+' defensive-research',**(headers or {})})
     with urllib.request.urlopen(req,timeout=timeout) as x: return json.loads(x.read().decode('utf-8','replace'))
 
+def rdap_registrar(d):
+    for e in d.get('entities',[]) or []:
+        if 'registrar' in (e.get('roles') or []):
+            for f in ((e.get('vcardArray') or [None,[]])[1] or []):
+                if f and f[0]=='fn': return str(f[3])[:120]
+    return None
 def rdap_domain(domain):
     try:
-        d=http_json('https://rdap.org/domain/'+urllib.parse.quote(domain)); return {'handle':d.get('handle'),'ldhName':d.get('ldhName'),'status':d.get('status',[]),'events':d.get('events',[])[:6],'nameservers':[n.get('ldhName') for n in d.get('nameservers',[])[:10]]}
+        d=http_json('https://rdap.org/domain/'+urllib.parse.quote(domain)); return {'handle':d.get('handle'),'ldhName':d.get('ldhName'),'registrar':rdap_registrar(d),'status':d.get('status',[]),'events':d.get('events',[])[:6],'nameservers':[n.get('ldhName') for n in d.get('nameservers',[])[:10]]}
     except Exception as e: return {'error':str(e)[:180]}
 def crtsh(domain):
     try:
@@ -152,6 +158,74 @@ def stix_bundle(r):
     for ip in r.get('ips',[]): objs.append({'type':'indicator','spec_version':'2.1','id':'indicator--'+str(uuid.uuid5(uuid.NAMESPACE_DNS,'ip:'+ip)),'created':now,'modified':now,'name':'PhishScope IP indicator','pattern_type':'stix','pattern':f"[ipv4-addr:value = '{ip}']",'valid_from':now})
     return {'type':'bundle','id':'bundle--'+str(uuid.uuid4()),'objects':objs}
 
+CASE_ID_RE=re.compile(r'[A-Za-z0-9_-]{1,64}')
+SEV_RANK=('critical','high','medium','low')
+def case_ref(r): return {'case_id':r['case_id'],'subject':r.get('headers',{}).get('Subject',''),'severity':r.get('severity'),'status':r.get('status','new')}
+def registration_date(rd):
+    for e in rd.get('events') or []:
+        if e.get('eventAction')=='registration': return str(e.get('eventDate',''))[:10] or None
+    return None
+def intel(cases=None):
+    cs=cases if cases is not None else all_cases(); doms={}; today=datetime.datetime.now(datetime.timezone.utc).date()
+    for r in cs:
+        for d in r.get('domains',[]):
+            e=doms.setdefault(d,{'cases':[],'enrichment':None,'enriched_utc':''}); e['cases'].append(case_ref(r))
+            x=(r.get('enrichment') or {}).get(d); when=str(r.get('enriched_utc') or '')
+            if x and (e['enrichment'] is None or when>=e['enriched_utc']): e['enrichment']=x; e['enriched_utc']=when  # newest lookup wins
+    rows=[]
+    for d,e in doms.items():
+        x=e['enrichment'] or {}; rd=x.get('rdap') or {}; ct=x.get('certificates') or {}; vt=x.get('virustotal') or {}; reg=registration_date(rd); age=None
+        if reg:
+            try: age=(today-datetime.date.fromisoformat(reg)).days
+            except ValueError: pass
+        rows.append({'domain':d,'enriched':bool(x),'enriched_utc':e['enriched_utc'] or None,'rdap_error':rd.get('error'),'registered':reg,'age_days':age,'newly_registered':age is not None and age<30,
+            'registrar':rd.get('registrar'),'status':rd.get('status',[]),'nameservers':sorted({str(n).lower() for n in rd.get('nameservers',[]) if n}),
+            'ct_names':len(ct.get('names',[])),'ct_error':ct.get('error'),'vt_malicious':(vt.get('last_analysis_stats') or {}).get('malicious') if vt.get('configured') and not vt.get('error') else None,'cases':e['cases']})
+    rows.sort(key=lambda r:(r['age_days'] is None,r['age_days'] or 0,r['domain']))
+    shared=[]
+    for kind,key in (('nameserver','nameservers'),('registrar','registrar')):
+        m={}
+        for r in rows:
+            for v in (r[key] if isinstance(r[key],list) else [r[key]] if r[key] else []): m.setdefault(v,[]).append(r)
+        for v,rs in m.items():
+            if len(rs)>1: shared.append({'kind':kind,'value':v,'domains':[r['domain'] for r in rs],'cases':list({c['case_id']:c for r in rs for c in r['cases']}.values())})
+    shared.sort(key=lambda x:(-len(x['domains']),x['kind'],x['value']))
+    seen={}
+    for r in cs:
+        for i in indicators(r): seen.setdefault(i,[]).append(case_ref(r))
+    recurring=sorted(({'indicator':i,'cases':c} for i,c in seen.items() if len(c)>1),key=lambda x:(-len(x['cases']),x['indicator']))
+    return {'summary':{'domains':len(rows),'enriched':sum(r['enriched'] for r in rows),'newly_registered':sum(r['newly_registered'] for r in rows),
+                       'shared_nameservers':sum(x['kind']=='nameserver' for x in shared),'recurring_indicators':len(recurring)},
+            'domains':rows,'shared_infrastructure':shared,'recurring_indicators':recurring}
+
+def sender_address(r): a=parseaddr(r.get('headers',{}).get('From',''))[1].lower(); return a if '@' in a else ''
+def merged_iocs(cs):
+    return {'senders':sorted({sender_address(r) for r in cs}-{''}),'domains':sorted({d for r in cs for d in r.get('domains',[])}),'ips':sorted({i for r in cs for i in r.get('ips',[])}),
+            'hashes':sorted({a['sha256'] for r in cs for a in r.get('attachments',[])}),'mitre':sorted({m['id'] for r in cs for m in r.get('mitre',[])})}
+def worst_severity(cs): return next((s for s in SEV_RANK if any(r.get('severity')==s for r in cs)),'medium')
+def combined_sigma(cs):
+    m=merged_iocs(cs); ids=[r['case_id'] for r in cs]; sel=[]
+    if m['senders']: sel.append(('sender','    sender|contains:\n'+''.join('      - '+json.dumps(x)+'\n' for x in m['senders'])))
+    if m['domains']: sel.append(('url','    url_domain|contains:\n'+''.join('      - '+json.dumps(x)+'\n' for x in m['domains'])))
+    if not sel: sel=[('selection','    url_domain|contains:\n      - "none"\n')]
+    tags=''.join('  - '+t+'\n' for t in ['attack.initial_access']+['attack.'+x.lower() for x in m['mitre']])
+    return ("title: PhishScope combined indicators (%d case%s)\nid: %s\nstatus: experimental\ndescription: Indicators merged from authorized defensive phishing investigations %s\ndate: %s\ntags:\n%slogsource:\n  category: email\ndetection:\n%s  condition: %s\nfalsepositives:\n  - Legitimate messages sharing infrastructure\nlevel: %s\n"
+            %(len(cs),'' if len(cs)==1 else 's',uuid.uuid5(uuid.NAMESPACE_DNS,'combined:'+','.join(sorted(ids))),', '.join(ids),datetime.date.today().strftime('%Y/%m/%d'),tags,''.join(f'  {k}:\n{v}' for k,v in sel),' or '.join(k for k,_ in sel),worst_severity(cs)))
+def combined_yara(cs):
+    m=merged_iocs(cs)
+    strings=[f'    $domain{i} = "{d}" ascii wide nocase' for i,d in enumerate(m['domains'])]+[f'    $sender{i} = "{d}" ascii wide nocase' for i,d in enumerate(m['senders'])]+[f'    $hash{i} = "{h}" ascii' for i,h in enumerate(m['hashes'])]
+    if not strings: strings=[f'    $case{i} = "{r["case_id"]}" ascii' for i,r in enumerate(cs)]
+    return ('rule PhishScope_Combined_'+datetime.date.today().strftime('%Y%m%d')+' {\n  meta:\n    description = "Indicators merged from %d defensive PhishScope case%s"\n    cases = "%s"\n    severity = "%s"\n  strings:\n'
+            %(len(cs),'' if len(cs)==1 else 's',', '.join(r['case_id'] for r in cs),worst_severity(cs))+'\n'.join(strings)+'\n  condition:\n    any of them\n}\n')
+def combined_stix(cs):
+    m=merged_iocs(cs); now=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    def ind(key,name,pattern,hit): return {'type':'indicator','spec_version':'2.1','id':'indicator--'+str(uuid.uuid5(uuid.NAMESPACE_DNS,key)),'created':now,'modified':now,'name':name,
+        'description':'Seen in PhishScope cases: '+', '.join(r['case_id'] for r in cs if hit(r)),'indicator_types':['malicious-activity'],'pattern_type':'stix','pattern':pattern,'valid_from':now}
+    objs=[ind('domain:'+d,'PhishScope domain indicator',f"[domain-name:value = '{d}']",lambda r,d=d:d in r.get('domains',[])) for d in m['domains']]
+    objs+=[ind('ip:'+ip,'PhishScope IP indicator',f"[ipv4-addr:value = '{ip}']",lambda r,ip=ip:ip in r.get('ips',[])) for ip in m['ips']]
+    objs+=[ind('sha256:'+h,'PhishScope attachment indicator',f"[file:hashes.'SHA-256' = '{h}']",lambda r,h=h:any(a['sha256']==h for a in r.get('attachments',[]))) for h in m['hashes']]
+    return {'type':'bundle','id':'bundle--'+str(uuid.uuid4()),'objects':objs}
+
 @app.get('/',response_class=HTMLResponse)
 def home(): return (ROOT/'frontend'/'index.html').read_text()
 @app.get('/api/health')
@@ -209,3 +283,14 @@ def sigma(case_id:str): return sigma_for(get_case(case_id))
 def yara(case_id:str): return yara_for(get_case(case_id))
 @app.get('/api/cases/{case_id}/stix')
 def stix(case_id:str): return stix_bundle(get_case(case_id))
+@app.get('/api/intel')
+def intel_rollup(): return intel()
+@app.get('/api/detections')
+def detections(cases:str='',format:str='sigma'):
+    ids=list(dict.fromkeys(x.strip() for x in cases.split(',') if x.strip()))
+    if format not in ('sigma','yara','stix'): raise HTTPException(400,'format must be sigma, yara or stix')
+    if not ids: raise HTTPException(400,'Pass one or more case IDs: ?cases=id1,id2')
+    if len(ids)>500 or not all(CASE_ID_RE.fullmatch(i) for i in ids): raise HTTPException(400,'Invalid case ID list')
+    cs=[get_case(i) for i in ids]
+    if format=='stix': return combined_stix(cs)
+    return PlainTextResponse(combined_sigma(cs) if format=='sigma' else combined_yara(cs))

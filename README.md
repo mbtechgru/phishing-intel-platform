@@ -20,6 +20,8 @@ PhishScope is a defensive phishing-investigation and passive threat-intelligence
 - Cross-case IOC correlation: finds other cases sharing a domain, IP, URL or attachment hash
 - Infrastructure relationship graph (case, sender, URLs, domains, IPs, attachments, certificate names)
 - SOC metrics: unique and reused indicators across all cases
+- Cross-case intelligence view: domain registration age, registrar, name servers, shared infrastructure and recurring indicators across all cases
+- Combined detections: one merged Sigma rule, YARA rule or STIX 2.1 bundle across selected cases
 - Case tags
 - Printable investigation report (browser Print / Save PDF)
 - Analyst console: case queue, 14-day intake chart, IOC tables with defanged values, enrichment cards and detection-content tabs
@@ -32,6 +34,8 @@ The analyst console at `http://localhost:8000` is served from `frontend/index.ht
 - **Intake**: drag-and-drop `.eml` upload, plus headline counts for open cases, critical + high cases, unique indicators (and how many recur across cases) and DMARC failures
 - **Cases opened, last 14 days**: stacked by severity, with hover details and a table view
 - **Case queue**: sorted newest first, filterable by All / Open / Critical / High
+- **Intelligence** (`#intelligence`): every domain seen across cases with its registration age (newly registered domains under 30 days flagged), registrar, name servers, certificate transparency name count and the cases it appeared in, filterable by All / Newly registered / In open cases / Not enriched. It also lists name servers and registrars shared by two or more domains, and indicators recurring in two or more cases. Domains show lookup data once enrichment has been run on a case containing them. Case IDs link back to the case view.
+- **Detections** (`#detections`): choose cases by scope (Open / Critical + high / All) and tick or untick individual cases to generate one merged Sigma rule, YARA rule or STIX 2.1 bundle with duplicates removed. Sigma output carries ATT&CK tags and the STIX bundle adds attachment-hash indicators. Copy or download as `.yml`, `.yar` or `.json`. Closed cases start unticked, since false reports often contain legitimate (including your own) domains.
 - **Case view**: tags and a link to the printable report, risk meter with the 30 / 60 / 80 severity thresholds and per-signal points, SPF/DKIM/DMARC results, From vs Reply-To mismatch highlighting, MITRE ATT&CK techniques, defanged IOCs with copy-raw buttons, passive enrichment results, correlated cases, a radial infrastructure graph, Sigma / YARA / STIX 2.1 output, case status and analyst notes
 
 Fonts load from Google Fonts. Without internet access the page falls back to system fonts.
@@ -40,10 +44,7 @@ Fonts load from Google Fonts. Without internet access the page falls back to sys
 
 `demo/dashboard.html` is a self-contained version of the v0.3 console (including correlations, the infrastructure graph, tags and the printable report) with fictional sample cases (reserved `.example` domains and documentation IP ranges). Open it directly in a browser; no backend is needed. Uploading an `.eml` there parses and scores it in the browser only, and enrichment results are simulated.
 
-The demo also previews two cross-case views, reachable from the top navigation (and linkable as `#intelligence` and `#detections`). These are not yet in `frontend/index.html`:
-
-- **Intelligence**: every domain seen across cases with its registration age (newly registered domains under 30 days flagged), registrar, name servers, certificate transparency name count and the cases it appeared in, filterable by All / Newly registered / In open cases. It also lists name servers and registrars shared by two or more domains, and indicators recurring in two or more cases. Case IDs link back to the case view.
-- **Detections**: choose cases by scope (Open / Critical + high / All) and tick or untick individual cases to generate one merged Sigma rule, YARA rule or STIX 2.1 bundle with duplicates removed. Sigma output carries ATT&CK tags and the STIX bundle adds attachment-hash indicators. Copy or download as `.yml`, `.yar` or `.json`. Closed cases start unticked, since false reports often contain legitimate (including your own) domains.
+The demo also includes the Intelligence and Detections views, computed in the browser from the sample cases.
 
 ## API
 
@@ -53,11 +54,13 @@ The demo also previews two cross-case views, reachable from the top navigation (
 | POST | `/api/analyze` | Upload an `.eml` (multipart field `file`, 20 MB max) and create a case |
 | GET | `/api/cases` | Case summaries: id, filename, created time, risk score, severity, status, subject, sender, DMARC result, indicator count, tags |
 | GET | `/api/metrics` | Case counts by severity and status, unique and reused indicators, top reused indicators |
+| GET | `/api/intel` | Cross-case rollup of saved enrichment: domains with registration age, registrar, name servers and cases; shared name servers and registrars; indicators recurring in 2+ cases |
+| GET | `/api/detections?cases=id1,id2&format=sigma` | One merged Sigma (text), YARA (text) or STIX 2.1 (JSON) artifact across the listed cases; `format` is `sigma`, `yara` or `stix` |
 | GET | `/api/cases/{case_id}` | Full case report |
 | GET | `/api/cases/{case_id}/correlations` | Other cases sharing indicators with this one, most shared first |
 | GET | `/api/cases/{case_id}/graph` | Infrastructure graph as `nodes` and `edges` |
 | GET | `/api/cases/{case_id}/report` | Printable HTML investigation report |
-| POST | `/api/cases/{case_id}/enrich` | Run RDAP, crt.sh and optional VirusTotal lookups (first 10 domains) |
+| POST | `/api/cases/{case_id}/enrich` | Run RDAP (including registrar name), crt.sh and optional VirusTotal lookups (first 10 domains) |
 | POST | `/api/cases/{case_id}/notes` | Add an analyst note: `{"text": "..."}` |
 | POST | `/api/cases/{case_id}/status` | Set status: `new`, `investigating`, `contained` or `closed` |
 | POST | `/api/cases/{case_id}/tags` | Replace tags: `{"tags": ["..."]}` (20 max, 40 characters each) |
