@@ -5,11 +5,13 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import parseaddr
 from urllib.parse import urlparse
-import hashlib, re, json, uuid, datetime, ipaddress, os, socket, urllib.request, urllib.parse
+from collections import Counter
+import hashlib, re, json, uuid, datetime, ipaddress, os, socket, urllib.request, urllib.parse, html
 
 ROOT=Path(__file__).resolve().parents[2]; CASES=ROOT/'cases'; CASES.mkdir(exist_ok=True)
-app=FastAPI(title='PhishScope', version='0.2.0', description='Defensive phishing investigation and passive threat-intelligence platform')
-URL_RE=re.compile(r"https?://[^\s<>\"']+", re.I); IP_RE=re.compile(r'(?<![\\w.])(?:\\d{1,3}\\.){3}\\d{1,3}(?![\\w.])')
+VERSION='0.3.0'
+app=FastAPI(title='PhishScope', version=VERSION, description='Defensive phishing investigation, IOC correlation and passive threat-intelligence platform')
+URL_RE=re.compile(r"https?://[^\s<>\"']+", re.I); IP_RE=re.compile(r'(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])')
 SAFE=re.compile(r'[^A-Za-z0-9._-]+')
 
 def sha256(b): return hashlib.sha256(b).hexdigest()
@@ -38,6 +40,7 @@ def parse_eml(data: bytes, evidence_dir: Path|None=None):
     urls=sorted(set(x.rstrip('.,);]') for x in URL_RE.findall(text))); domains=sorted(set(urlparse(x).hostname.lower() for x in urls if urlparse(x).hostname))
     ips=sorted(set(x for x in IP_RE.findall(text) if public_ip(x))); auth=headers.get('Authentication-Results',''); flags=[]; score=0
     fd,rd=domain_of_address(headers.get('From')),domain_of_address(headers.get('Reply-To'))
+    if fd: domains=sorted(set(domains+[fd]))
     def flag(text,pts):
         nonlocal score
         flags.append(text); signals.append({'text':text,'points':pts}); score+=pts
@@ -58,8 +61,14 @@ def get_case(cid):
     if not p.exists(): raise HTTPException(404,'Case not found')
     return json.loads(p.read_text())
 def save_case(r): (CASES/r['case_id']/'report.json').write_text(json.dumps(r,indent=2))
+def all_cases():
+    out=[]
+    for f in sorted(CASES.glob('*/report.json'),reverse=True):
+        try: out.append(json.loads(f.read_text()))
+        except: pass
+    return out
 def http_json(url, headers=None, timeout=8):
-    req=urllib.request.Request(url,headers={'User-Agent':'PhishScope/0.2 defensive-research',**(headers or {})})
+    req=urllib.request.Request(url,headers={'User-Agent':'PhishScope/'+VERSION+' defensive-research',**(headers or {})})
     with urllib.request.urlopen(req,timeout=timeout) as x: return json.loads(x.read().decode('utf-8','replace'))
 
 def rdap_domain(domain):
@@ -78,6 +87,54 @@ def vt_domain(domain):
     try:
         d=http_json('https://www.virustotal.com/api/v3/domains/'+urllib.parse.quote(domain),{'x-apikey':key}); a=d.get('data',{}).get('attributes',{}); return {'configured':True,'reputation':a.get('reputation'),'last_analysis_stats':a.get('last_analysis_stats',{}),'categories':a.get('categories',{})}
     except Exception as e: return {'configured':True,'error':str(e)[:180]}
+
+def indicators(r):
+    return set(['domain:'+x for x in r.get('domains',[])]+['ip:'+x for x in r.get('ips',[])]+['url:'+x for x in r.get('urls',[])]+['sha256:'+a['sha256'] for a in r.get('attachments',[])])
+def correlations(cid, cases=None):
+    base=get_case(cid); bi=indicators(base); matches=[]
+    for r in (cases if cases is not None else all_cases()):
+        if r.get('case_id')==cid: continue
+        shared=sorted(bi & indicators(r))
+        if shared: matches.append({'case_id':r['case_id'],'subject':r.get('headers',{}).get('Subject',''),'severity':r.get('severity'),'risk_score':r.get('risk_score'),'status':r.get('status'),'created_utc':r.get('created_utc'),'shared_count':len(shared),'shared_indicators':shared[:50]})
+    return sorted(matches,key=lambda x:x['shared_count'],reverse=True)
+def graph_for(r):
+    nodes=[]; edges=[]; seen=set()
+    def node(i,label,t):
+        if i not in seen: seen.add(i); nodes.append({'id':i,'label':label,'type':t})
+    def edge(s,t,rel): edges.append({'source':s,'target':t,'relation':rel})
+    cid='case:'+r['case_id']; node(cid,r['case_id'],'case'); sender=r.get('headers',{}).get('From','')
+    if sender: node('sender:'+sender,sender,'sender'); edge(cid,'sender:'+sender,'received-from')
+    for d in r.get('domains',[]): node('domain:'+d,d,'domain'); edge(cid,'domain:'+d,'observed')
+    for u in r.get('urls',[]):
+        node('url:'+u,u,'url'); edge(cid,'url:'+u,'contains'); h=urlparse(u).hostname
+        if h: node('domain:'+h.lower(),h.lower(),'domain'); edge('url:'+u,'domain:'+h.lower(),'hosted-on')
+    for ip in r.get('ips',[]): node('ip:'+ip,ip,'ip'); edge(cid,'ip:'+ip,'observed')
+    for a in r.get('attachments',[]): node('hash:'+a['sha256'],a['filename'],'attachment'); edge(cid,'hash:'+a['sha256'],'attachment')
+    for d,e in (r.get('enrichment') or {}).items():
+        for n in (e.get('certificates') or {}).get('names',[])[:25]:
+            if n!=d: node('domain:'+n,n,'related-domain'); edge('domain:'+d,'domain:'+n,'certificate-name')
+    return {'nodes':nodes,'edges':edges}
+def metrics():
+    cs=all_cases(); ioc=Counter()
+    for r in cs: ioc.update(indicators(r))
+    return {'total_cases':len(cs),'severity':dict(Counter(r.get('severity','unknown') for r in cs)),'status':dict(Counter(r.get('status','new') for r in cs)),
+            'total_unique_iocs':len(ioc),'reused_iocs':sum(1 for n in ioc.values() if n>1),'top_iocs':[{'indicator':k,'cases':v} for k,v in ioc.most_common(10) if v>1]}
+def report_html(r):
+    esc=lambda x: html.escape(str(x if x is not None else '')); li=lambda items,empty: ''.join(f'<li>{x}</li>' for x in items) or f'<li class=m>{empty}</li>'
+    h=r.get('headers',{}); signals=r.get('signals') or [{'text':t,'points':None} for t in r.get('findings',[])]
+    sig=li([esc(s['text'])+(f' <b>+{esc(s["points"])}</b>' if s.get('points') is not None else '') for s in signals],'No heuristic findings')
+    iocs=li([f'<code>{esc(x)}</code>' for x in sorted(indicators(r))],'None')
+    corr=li([f'{esc(x["case_id"])} ({esc(x["severity"])}) — {x["shared_count"]} shared IOC(s)' for x in correlations(r['case_id'])],'No correlated cases')
+    mitre=li([esc(x['id'])+' — '+esc(x['name']) for x in r.get('mitre',[])],'None')
+    notes=li([esc(n.get('created_utc'))+': '+esc(n.get('text')) for n in r.get('notes',[])],'None')
+    tags=', '.join(esc(t) for t in r.get('tags',[])) or 'none'
+    return f'''<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>PhishScope {esc(r['case_id'])}</title>
+<style>body{{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:900px;margin:40px auto;padding:0 16px;color:#17202a;background:#fff;line-height:1.45}}h1{{border-bottom:3px solid #17202a;padding-bottom:10px}}.score{{font-size:28px;font-weight:bold}}code{{word-break:break-all}}.m{{color:#6c7f92}}@media print{{button{{display:none}}}}</style>
+<button onclick="print()">Print / Save PDF</button><h1>PhishScope Investigation Report</h1>
+<p><b>Case:</b> {esc(r['case_id'])}<br><b>Subject:</b> {esc(h.get('Subject'))}<br><b>From:</b> {esc(h.get('From'))}<br><b>Created:</b> {esc(r.get('created_utc'))}<br><b>Status:</b> {esc(r.get('status'))}<br><b>Tags:</b> {tags}<br><b>Evidence SHA-256:</b> <code>{esc(r.get('file_sha256'))}</code></p>
+<p class=score>Risk {esc(r.get('risk_score'))}/100 — {esc(str(r.get('severity','')).upper())}</p>
+<h2>Findings</h2><ul>{sig}</ul><h2>Indicators</h2><ul>{iocs}</ul><h2>MITRE ATT&amp;CK</h2><ul>{mitre}</ul><h2>Cross-case correlation</h2><ul>{corr}</ul><h2>Analyst notes</h2><ul>{notes}</ul>
+<hr><small>Generated by PhishScope v{VERSION}. Defensive research only.</small></html>'''
 
 def sigma_for(r):
     senders=[r.get('headers',{}).get('From','')]; doms=r.get('domains',[])
@@ -98,26 +155,34 @@ def stix_bundle(r):
 @app.get('/',response_class=HTMLResponse)
 def home(): return (ROOT/'frontend'/'index.html').read_text()
 @app.get('/api/health')
-def health(): return {'name':'PhishScope','version':'0.2.0','virustotal_configured':bool(os.getenv('VIRUSTOTAL_API_KEY'))}
+def health(): return {'name':'PhishScope','version':VERSION,'virustotal_configured':bool(os.getenv('VIRUSTOTAL_API_KEY'))}
 @app.post('/api/analyze')
 async def analyze(file:UploadFile=File(...)):
     if not (file.filename or '').lower().endswith('.eml'): raise HTTPException(400,'Upload an .eml file')
     data=await file.read()
     if len(data)>20*1024*1024: raise HTTPException(413,'File too large (20 MB max)')
     cid=datetime.datetime.now().strftime('%Y%m%d')+'-'+uuid.uuid4().hex[:8]; d=CASES/cid; d.mkdir(); (d/'original.eml').write_bytes(data)
-    r=parse_eml(data,d); r.update({'case_id':cid,'filename':sanitize(file.filename),'file_sha256':sha256(data),'created_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'new','notes':[],'enrichment':{}}); save_case(r); return r
+    r=parse_eml(data,d); r.update({'case_id':cid,'filename':sanitize(file.filename),'file_sha256':sha256(data),'created_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'new','notes':[],'enrichment':{},'tags':[]}); save_case(r); return r
 @app.get('/api/cases')
 def cases():
     out=[]
-    for f in sorted(CASES.glob('*/report.json'),reverse=True):
+    for r in all_cases():
         try:
-            r=json.loads(f.read_text()); h=r.get('headers',{}); row={k:r.get(k) for k in ('case_id','filename','created_utc','risk_score','severity','status')}
+            h=r.get('headers',{}); row={k:r.get(k) for k in ('case_id','filename','created_utc','risk_score','severity','status')}
             m=re.search(r'dmarc=(\w+)',h.get('Authentication-Results','').lower())
-            row.update({'subject':h.get('Subject',''),'sender':h.get('From',''),'dmarc':m.group(1) if m else 'none','ioc_count':sum(len(r.get(k,[])) for k in ('urls','domains','ips','attachments'))}); out.append(row)
+            row.update({'subject':h.get('Subject',''),'sender':h.get('From',''),'dmarc':m.group(1) if m else 'none','ioc_count':sum(len(r.get(k,[])) for k in ('urls','domains','ips','attachments')),'tags':r.get('tags',[])}); out.append(row)
         except: pass
     return out
+@app.get('/api/metrics')
+def dashboard_metrics(): return metrics()
 @app.get('/api/cases/{case_id}')
 def case(case_id:str): return get_case(case_id)
+@app.get('/api/cases/{case_id}/graph')
+def graph(case_id:str): return graph_for(get_case(case_id))
+@app.get('/api/cases/{case_id}/correlations')
+def corr(case_id:str): return correlations(case_id)
+@app.get('/api/cases/{case_id}/report',response_class=HTMLResponse)
+def report(case_id:str): return report_html(get_case(case_id))
 @app.post('/api/cases/{case_id}/enrich')
 def enrich(case_id:str):
     r=get_case(case_id); enrichment={}
@@ -133,6 +198,11 @@ def status(case_id:str,payload:dict=Body(...)):
     r=get_case(case_id); s=str(payload.get('status','')).lower()
     if s not in ('new','investigating','contained','closed'): raise HTTPException(400,'Invalid status')
     r['status']=s; save_case(r); return {'status':s}
+@app.post('/api/cases/{case_id}/tags')
+def tags(case_id:str,payload:dict=Body(...)):
+    r=get_case(case_id); raw=payload.get('tags',[])
+    if not isinstance(raw,list): raise HTTPException(400,'tags must be a list')
+    r['tags']=sorted(set(str(x).strip()[:40] for x in raw if str(x).strip()))[:20]; save_case(r); return {'tags':r['tags']}
 @app.get('/api/cases/{case_id}/sigma',response_class=PlainTextResponse)
 def sigma(case_id:str): return sigma_for(get_case(case_id))
 @app.get('/api/cases/{case_id}/yara',response_class=PlainTextResponse)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PhishScope v0.2</title>
+<title>PhishScope v0.3</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -195,6 +195,30 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
 body{margin:0;min-height:100vh}
 .drop.busy{opacity:.7;pointer-events:none}
 .err{color:var(--crit)}
+
+/* tags */
+.tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tagp{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:2px 4px 2px 9px;font-size:12px;color:var(--ink-2)}
+.tagp button{border:0;background:none;padding:0 4px;color:var(--muted);font-size:13px;line-height:1}
+.tagp button:hover{color:var(--crit)}
+.tags input{font:inherit;font-size:12px;border:1px dashed var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:3px 10px;width:130px}
+.row .tg{font-size:11px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:0 6px}
+
+/* correlations */
+.corr{display:flex;flex-direction:column}
+.corr .c-row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;padding:9px 0;border-top:1px solid var(--line);cursor:pointer;align-items:start}
+.corr .c-row:first-child{border-top:0}
+.corr .c-row:hover .subj{color:var(--accent)}
+.corr .stripe{align-self:stretch;border-radius:2px}
+.corr .shared{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
+.corr .cnt{font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* infrastructure graph */
+.graph-box{position:relative}
+.graph-box svg{display:block;width:100%;height:auto;max-height:440px}
+.graph-box line{stroke:var(--line);stroke-width:1.2}
+.graph-box text{font-family:var(--font-mono);font-size:10px;fill:var(--ink-2)}
+.graph-box circle,.graph-box rect{stroke:var(--panel);stroke-width:1.5}
 </style>
 </head>
 <body>
@@ -202,7 +226,7 @@ body{margin:0;min-height:100vh}
   <div class="wrap">
     <div class="brand">
       <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="5" width="24" height="16" rx="3" style="fill:none;stroke:var(--accent)" stroke-width="2"/><path d="M2 7l11 8 11-8" style="fill:none;stroke:var(--accent)" stroke-width="2"/><circle cx="20" cy="19" r="5" style="fill:var(--panel);stroke:var(--ink)" stroke-width="2"/><path d="M23.5 22.5L26 25" style="stroke:var(--ink)" stroke-width="2"/></svg>
-      <b>PhishScope</b><span class="ver" id="ver">v0.2.0</span>
+      <b>PhishScope</b><span class="ver" id="ver">v0.3.0</span>
     </div>
     <nav aria-label="Sections"><span class="on">Cases</span><span>Intelligence</span><span>Detections</span></nav>
     <div class="svc" aria-label="Service status">
@@ -264,7 +288,8 @@ const sevOf=s=>SEV[s]?s:'low';
 async function api(u,o){const r=await fetch(u,o),ct=r.headers.get('content-type')||'';const d=ct.includes('json')?await r.json():await r.text();if(!r.ok)throw Error(d.detail||d||r.statusText);return d}
 
 let CASES=[];           // summaries from GET /api/cases
-let current=null;       // full report from GET /api/cases/{id}
+let METRICS=null;       // GET /api/metrics
+let current=null;       // full report from GET /api/cases/{id}, plus .corr and .graph once loaded
 let state={sel:null,filter:'all',iocTab:'urls',detTab:'sigma',det:{},enriching:false};
 try{state.filter=localStorage.getItem('ps-filter')||'all';state.sel=localStorage.getItem('ps-case')}catch{}
 
@@ -280,12 +305,13 @@ const authOf=r=>{const ar=hdr(r,'Authentication-Results').toLowerCase();const g=
 function renderKpis(){
   const open=CASES.filter(c=>c.status!=='closed');
   const hot=open.filter(c=>c.severity==='critical'||c.severity==='high').length;
-  const iocs=CASES.reduce((a,c)=>a+(c.ioc_count||0),0);
   const fails=CASES.filter(c=>c.dmarc==='fail').length;
+  const ioc=METRICS?['Unique indicators',METRICS.total_unique_iocs,`${METRICS.reused_iocs} seen in 2+ cases`]
+                   :['Indicators',CASES.reduce((a,c)=>a+(c.ioc_count||0),0),'URLs, domains, IPs, files'];
   $('#kpis').innerHTML=[
     ['Open cases',open.length,`${CASES.filter(c=>c.status==='new').length} awaiting triage`],
     ['Critical + high',hot,'open, by risk score'],
-    ['Indicators',iocs,'URLs, domains, IPs, files'],
+    ioc,
     ['DMARC failures',`${fails}/${CASES.length}`,'of all cases'],
   ].map(([l,v,s])=>`<div class="kpi"><span class="label">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join('');
 }
@@ -347,16 +373,75 @@ function renderQueue(){
       <span class="stripe" style="background:${SEV[s].c}"></span>
       <span class="sc">${E(c.risk_score)}</span>
       <span style="min-width:0"><div class="subj">${E(c.subject||c.filename||'(no subject)')}</div>
-      <div class="meta"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span><span class="st ${E(c.status)}">${E(c.status)}</span><span>${fmtTime(c.created_utc)}</span></div></span>
+      <div class="meta"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span><span class="st ${E(c.status)}">${E(c.status)}</span><span>${fmtTime(c.created_utc)}</span>${(c.tags||[]).map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
     </div>`}).join(''):`<div class="empty" style="margin:14px">${CASES.length?'No cases match this filter.':'No cases yet. Drop an .eml above to open the first one.'}</div>`;
   $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>openCase(r.dataset.id);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
 }
 
-async function loadCases(){CASES=await api('/api/cases');renderKpis();renderChart();renderQueue()}
+async function loadCases(){
+  CASES=await api('/api/cases');
+  try{METRICS=await api('/api/metrics')}catch{METRICS=null}
+  renderKpis();renderChart();renderQueue();
+}
 async function openCase(id){
   try{current=await api('/api/cases/'+encodeURIComponent(id))}catch(e){toast(e.message);return}
   state.sel=id;state.iocTab='urls';state.det={};try{localStorage.setItem('ps-case',id)}catch{}
-  renderQueue();renderCase();loadDetection();
+  renderQueue();renderCase();loadDetection();loadRelations();
+}
+/* Correlations and infrastructure graph; both depend on the saved case, so reload after enrichment */
+async function loadRelations(){
+  const c=current;if(!c)return;const id=encodeURIComponent(c.case_id);
+  const [corr,graph]=await Promise.all([api(`/api/cases/${id}/correlations`).catch(e=>({error:e.message})),api(`/api/cases/${id}/graph`).catch(e=>({error:e.message}))]);
+  if(current!==c)return;c.corr=corr;c.graph=graph;renderCase();
+}
+async function saveTags(c,tags){
+  try{const r=await api(`/api/cases/${encodeURIComponent(c.case_id)}/tags`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tags})});
+    c.tags=r.tags;const row=CASES.find(x=>x.case_id===c.case_id);if(row)row.tags=r.tags;renderQueue();renderCase()}
+  catch(e){toast(e.message)}
+}
+
+/* Correlated cases from GET /api/cases/{id}/correlations */
+function corrList(c){
+  const x=c.corr;
+  if(!x)return '<div class="muted">Checking other cases…</div>';
+  if(x.error)return `<div class="empty err">Could not load correlations: ${E(x.error)}</div>`;
+  if(!x.length)return '<div class="empty">No other case shares a domain, IP, URL or attachment hash with this one.</div>';
+  return `<div class="corr">${x.map(m=>{const s=sevOf(m.severity);const sh=m.shared_indicators.map(i=>{const k=i.indexOf(':');return i.slice(0,k)+' '+(i.startsWith('sha256:')?i.slice(k+1):defang(i.slice(k+1)))});
+    return `<div class="c-row" tabindex="0" role="button" data-cid="${E(m.case_id)}"><span class="stripe" style="background:${SEV[s].c}"></span>
+      <span style="min-width:0"><div class="subj">${E(m.subject||m.case_id)}</div><div class="meta muted" style="font-size:12px"><span class="mono">${E(m.case_id)}</span> · ${SEV[s].label} ${E(m.risk_score??'')} · ${E(m.status||'')} · ${fmtTime(m.created_utc)}</div>
+      <div class="shared">${sh.slice(0,6).map(E).join('<br>')}${sh.length>6?`<br>+${sh.length-6} more`:''}</div></span>
+      <span class="cnt">${m.shared_count} shared</span></div>`}).join('')}</div>`;
+}
+
+/* Radial infrastructure graph from GET /api/cases/{id}/graph.
+   Ring 1: sender, domains, URLs, IPs, attachments. Ring 2: certificate names found during enrichment, placed beside their parent domain. */
+const GTYPE={case:['var(--ink)','Case'],sender:['var(--serious)','Sender'],domain:['var(--accent)','Domain'],url:['var(--warn)','URL'],ip:['var(--good)','IP'],attachment:['var(--crit)','Attachment'],'related-domain':['var(--muted)','Cert name']};
+function graphSvg(g){
+  if(!g)return '<div class="muted">Building graph…</div>';
+  if(g.error)return `<div class="empty err">Could not load graph: ${E(g.error)}</div>`;
+  if(g.nodes.length<2)return '<div class="empty">Nothing to graph yet.</div>';
+  const W=640,H=460,cx=W/2,cy=H/2,R1=135,R2=205,pos={};
+  const order=['sender','domain','url','ip','attachment'];
+  const ring1=g.nodes.filter(n=>order.includes(n.type)).sort((a,b)=>order.indexOf(a.type)-order.indexOf(b.type));
+  const ring2=g.nodes.filter(n=>n.type==='related-domain');
+  pos[g.nodes[0].id]=[cx,cy];
+  ring1.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/ring1.length;pos[n.id]=[cx+R1*Math.cos(a),cy+R1*Math.sin(a),a]});
+  const kids={};g.edges.filter(e=>e.relation==='certificate-name').forEach(e=>{if(!pos[e.target])(kids[e.source]=kids[e.source]||[]).push(e.target)});
+  const step=ring1.length?2*Math.PI/ring1.length:2*Math.PI;
+  Object.entries(kids).forEach(([p,ks])=>{const a0=(pos[p]||[0,0,0])[2]||0;const spread=Math.min(step*.8,ks.length*.06);
+    ks.forEach((k,i)=>{if(pos[k])return;const a=a0-spread/2+(ks.length>1?i*spread/(ks.length-1):0);pos[k]=[cx+R2*Math.cos(a),cy+R2*Math.sin(a),a]})});
+  const short=s=>{s=String(s);return s.length>26?s.slice(0,24)+'…':s};
+  let lines='',dots='',labels='';
+  g.edges.forEach(e=>{const a=pos[e.source],b=pos[e.target];if(a&&b)lines+=`<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"><title>${E(e.relation)}</title></line>`});
+  g.nodes.forEach(n=>{const p=pos[n.id];if(!p)return;const [col]=GTYPE[n.type]||GTYPE.domain;const raw=n.type==='attachment'||n.type==='case'||n.type==='sender'?n.label:defang(n.label);
+    const r=n.type==='case'?11:n.type==='related-domain'?3.5:6;
+    dots+=n.type==='case'?`<rect x="${p[0]-r}" y="${p[1]-r}" width="${2*r}" height="${2*r}" rx="3" style="fill:${col}"><title>Case ${E(n.label)}</title></rect>`
+                         :`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${r}" style="fill:${col}"><title>${E(GTYPE[n.type]?.[1]||n.type)}: ${E(raw)}</title></circle>`;
+    if(n.type!=='related-domain'&&n.type!=='case'){const right=Math.cos(p[2])>=0;labels+=`<text x="${(p[0]+(right?9:-9)).toFixed(1)}" y="${(p[1]+3).toFixed(1)}" text-anchor="${right?'start':'end'}">${E(short(raw))}</text>`}});
+  const types=[...new Set(g.nodes.map(n=>n.type))];
+  return `<div class="legend">${types.map(t=>`<span><span class="sw" style="background:${(GTYPE[t]||GTYPE.domain)[0]};border-radius:50%"></span>${(GTYPE[t]||[0,t])[1]} <span class="muted mono">${g.nodes.filter(n=>n.type===t).length}</span></span>`).join('')}</div>
+    <div class="graph-box"><svg viewBox="-60 0 ${W+120} ${H}" role="img" aria-label="Infrastructure graph: ${g.nodes.length} nodes, ${g.edges.length} relationships">${lines}${dots}${labels}</svg></div>
+    ${ring2.length?`<div class="muted" style="font-size:12px">${ring2.length} certificate name${ring2.length>1?'s':''} from crt.sh shown as small outer dots. Hover any node for its full value.</div>`:'<div class="muted" style="font-size:12px">Run passive enrichment to add certificate-transparency names to the graph.</div>'}`;
 }
 async function loadDetection(){
   const c=current,t=state.detTab;if(!c||state.det[t]!=null)return;
@@ -426,7 +511,9 @@ function renderCase(){
       <dt>Opened</dt><dd>${fmtTime(c.created_utc)}${to?` · sent to <span class="mono">${E(to)}</span>`:''}</dd>
       <dt>Evidence</dt><dd><span class="mono">cases/${E(c.case_id)}/original.eml</span> · ${E(c.filename)}</dd>
       <dt>SHA-256</dt><dd class="mono">${E(c.file_sha256)}</dd>
+      <dt>Tags</dt><dd><div class="tags" id="tagBox">${(c.tags||[]).map(t=>`<span class="tagp">${E(t)}<button data-tag="${E(t)}" aria-label="Remove tag ${E(t)}">×</button></span>`).join('')}<input id="tagIn" maxlength="40" placeholder="Add tag, press Enter" aria-label="Add tag"></div></dd>
     </dl>
+    <div><a class="btn ghost" style="text-decoration:none;display:inline-block" href="/api/cases/${encodeURIComponent(c.case_id)}/report" target="_blank" rel="noopener">Open printable report</a></div>
   </div>
 
   <div class="grid2">
@@ -463,10 +550,20 @@ function renderCase(){
   <div class="panel sec">
     <div class="sec-h"><h2>Passive enrichment</h2>
       <button class="btn${hasEnr?' ghost':''}" id="enrichBtn" ${domains.length&&!state.enriching?'':'disabled'}>${state.enriching?'Querying RDAP and crt.sh…':hasEnr?'Re-run enrichment':'Run passive enrichment'}</button></div>
-    ${!domains.length?`<div class="empty">No domains to enrich. This message carries no URLs.</div>`:
+    ${!domains.length?`<div class="empty">No domains to enrich. This message has no sender domain or URLs.</div>`:
       hasEnr?`<div class="intel">${Object.entries(enr).map(([d,x])=>intelCard(d,x)).join('')}</div>
         <div class="muted" style="font-size:12px">${c.enriched_utc?`Last run ${fmtTime(c.enriched_utc)}. `:''}${anyVt?'':'VirusTotal reputation skipped: <span class="mono">VIRUSTOTAL_API_KEY</span> not configured.'}${domains.length>10?` Only the first 10 of ${domains.length} domains are enriched.`:''}</div>`
       :`<div class="empty">Queries RDAP for registration data and crt.sh for certificate transparency names on ${Math.min(10,domains.length)} domain${domains.length>1?'s':''}. No traffic is sent to the suspect infrastructure.</div>`}
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Correlated cases</h2><span class="muted" style="font-size:12px">Other cases sharing a domain, IP, URL or attachment hash</span></div>
+    ${corrList(c)}
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Infrastructure graph</h2><span class="muted" style="font-size:12px">${c.graph&&c.graph.nodes?`${c.graph.nodes.length} nodes · ${c.graph.edges.length} relationships`:''}</span></div>
+    ${graphSvg(c.graph)}
   </div>
 
   <div class="panel sec">
@@ -497,8 +594,14 @@ function renderCase(){
     state.enriching=true;renderCase();
     try{c.enrichment=await api(`/api/cases/${encodeURIComponent(c.case_id)}/enrich`,{method:'POST'});c.enriched_utc=new Date().toISOString();setSourceDots(c.enrichment);toast('Enrichment complete')}
     catch(e){toast(e.message)}
-    state.enriching=false;if(current===c)renderCase();
+    state.enriching=false;if(current===c){renderCase();loadRelations()}
   };
+  const tagIn=$('#tagIn');
+  tagIn.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const t=tagIn.value.trim();if(!t)return;
+    if((c.tags||[]).length>=20){toast('20 tags max');return}
+    saveTags(c,[...(c.tags||[]),t]).then(()=>{const n=$('#tagIn');if(n)n.focus()})};
+  $('#tagBox').querySelectorAll('[data-tag]').forEach(b=>b.onclick=()=>saveTags(c,(c.tags||[]).filter(t=>t!==b.dataset.tag)));
+  document.querySelectorAll('.c-row').forEach(r=>{const go=()=>openCase(r.dataset.cid);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
   $('#noteForm').onsubmit=async e=>{e.preventDefault();const t=$('#noteText').value.trim();if(!t)return;
     try{c.notes=await api(`/api/cases/${encodeURIComponent(c.case_id)}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});renderCase();toast('Note added')}catch(e){toast(e.message)}};
   setSourceDots(enr);

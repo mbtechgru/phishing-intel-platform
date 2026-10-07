@@ -1,12 +1,12 @@
-# PhishScope v0.2
+# PhishScope v0.3
 
-PhishScope is a defensive phishing-investigation and passive threat-intelligence platform. Upload an RFC 822 `.eml` file to preserve evidence, extract indicators, score common phishing signals, enrich domains through passive sources, manage analyst notes/status, and generate starter detection artifacts.
+PhishScope is a defensive phishing-investigation and passive threat-intelligence platform. Upload an RFC 822 `.eml` file to preserve evidence, extract indicators, score common phishing signals, enrich domains through passive sources, manage analyst notes/status, and generate starter detection artifacts. v0.3 adds cross-case IOC correlation, an infrastructure relationship graph, SOC metrics, case tags and a printable investigation report.
 
-## v0.2 capabilities
+## Capabilities
 
 - Evidence preservation with SHA-256 for the original message and attachments
 - Sanitized attachment extraction into each case evidence directory
-- URL, domain and public-IP extraction
+- URL, domain (including the From domain) and public-IP extraction
 - SPF/DKIM/DMARC and From/Reply-To mismatch findings
 - Risk score, severity, case status and analyst notes
 - MITRE ATT&CK phishing/user-execution mapping
@@ -17,6 +17,11 @@ PhishScope is a defensive phishing-investigation and passive threat-intelligence
 - YARA starter-rule generation
 - STIX 2.1 indicator bundle export
 - Per-signal risk breakdown (points each finding added to the score)
+- Cross-case IOC correlation: finds other cases sharing a domain, IP, URL or attachment hash
+- Infrastructure relationship graph (case, sender, URLs, domains, IPs, attachments, certificate names)
+- SOC metrics: unique and reused indicators across all cases
+- Case tags
+- Printable investigation report (browser Print / Save PDF)
 - Analyst console: case queue, 14-day intake chart, IOC tables with defanged values, enrichment cards and detection-content tabs
 - Persistent case browser and Docker deployment
 
@@ -24,10 +29,10 @@ PhishScope is a defensive phishing-investigation and passive threat-intelligence
 
 The analyst console at `http://localhost:8000` is served from `frontend/index.html` and talks only to the local API. It includes:
 
-- **Intake**: drag-and-drop `.eml` upload, plus headline counts for open cases, critical + high cases, extracted indicators and DMARC failures
+- **Intake**: drag-and-drop `.eml` upload, plus headline counts for open cases, critical + high cases, unique indicators (and how many recur across cases) and DMARC failures
 - **Cases opened, last 14 days**: stacked by severity, with hover details and a table view
 - **Case queue**: sorted newest first, filterable by All / Open / Critical / High
-- **Case view**: risk meter with the 30 / 60 / 80 severity thresholds and per-signal points, SPF/DKIM/DMARC results, From vs Reply-To mismatch highlighting, MITRE ATT&CK techniques, defanged IOCs with copy-raw buttons, passive enrichment results, Sigma / YARA / STIX 2.1 output, case status and analyst notes
+- **Case view**: tags and a link to the printable report, risk meter with the 30 / 60 / 80 severity thresholds and per-signal points, SPF/DKIM/DMARC results, From vs Reply-To mismatch highlighting, MITRE ATT&CK techniques, defanged IOCs with copy-raw buttons, passive enrichment results, correlated cases, a radial infrastructure graph, Sigma / YARA / STIX 2.1 output, case status and analyst notes
 
 Fonts load from Google Fonts. Without internet access the page falls back to system fonts.
 
@@ -41,11 +46,16 @@ Fonts load from Google Fonts. Without internet access the page falls back to sys
 |---|---|---|
 | GET | `/api/health` | Version and whether VirusTotal is configured |
 | POST | `/api/analyze` | Upload an `.eml` (multipart field `file`, 20 MB max) and create a case |
-| GET | `/api/cases` | Case summaries: id, filename, created time, risk score, severity, status, subject, sender, DMARC result, indicator count |
+| GET | `/api/cases` | Case summaries: id, filename, created time, risk score, severity, status, subject, sender, DMARC result, indicator count, tags |
+| GET | `/api/metrics` | Case counts by severity and status, unique and reused indicators, top reused indicators |
 | GET | `/api/cases/{case_id}` | Full case report |
+| GET | `/api/cases/{case_id}/correlations` | Other cases sharing indicators with this one, most shared first |
+| GET | `/api/cases/{case_id}/graph` | Infrastructure graph as `nodes` and `edges` |
+| GET | `/api/cases/{case_id}/report` | Printable HTML investigation report |
 | POST | `/api/cases/{case_id}/enrich` | Run RDAP, crt.sh and optional VirusTotal lookups (first 10 domains) |
 | POST | `/api/cases/{case_id}/notes` | Add an analyst note: `{"text": "..."}` |
 | POST | `/api/cases/{case_id}/status` | Set status: `new`, `investigating`, `contained` or `closed` |
+| POST | `/api/cases/{case_id}/tags` | Replace tags: `{"tags": ["..."]}` (20 max, 40 characters each) |
 | GET | `/api/cases/{case_id}/sigma` | Sigma starter rule (text) |
 | GET | `/api/cases/{case_id}/yara` | YARA starter rule (text) |
 | GET | `/api/cases/{case_id}/stix` | STIX 2.1 indicator bundle (JSON) |
@@ -88,11 +98,7 @@ Cases are stored under `cases/<case-id>/` with `original.eml`, `report.json`, an
 
 ## Safety boundary
 
-PhishScope v0.2 performs local evidence analysis and passive intelligence collection. It does not exploit, scan, compromise, credential-test, DDoS, deploy payloads to, or otherwise obtain unauthorized access to third-party infrastructure. Use external services according to their terms and only investigate systems/data you are authorized to handle.
-
-## Known issues
-
-- Public IP extraction currently returns no results: `IP_RE` in `backend/app/main.py` uses doubled backslashes inside a raw string, so the pattern never matches. The IP indicator count, STIX IP indicators and the IPs tab stay empty until it is fixed.
+PhishScope performs local evidence analysis and passive intelligence collection. It does not exploit, scan, compromise, credential-test, DDoS, deploy payloads to, or otherwise obtain unauthorized access to third-party infrastructure. Use external services according to their terms and only investigate systems/data you are authorized to handle.
 
 ## Detection caveat
 
