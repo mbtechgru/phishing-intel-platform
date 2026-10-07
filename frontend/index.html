@@ -182,6 +182,9 @@ table.ioc td.mono{overflow-wrap:anywhere;min-width:180px}
 .intel .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
 .intel .card .mono{overflow-wrap:anywhere}
 .intel .src{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.intel dl.rd{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;margin:0;font-size:12px}
+.intel dl.rd dt{color:var(--muted)}
+.intel dl.rd dd{margin:0;overflow-wrap:anywhere}
 .age{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .empty{border:1px dashed var(--line);border-radius:8px;padding:14px;color:var(--muted);font-size:13px}
 
@@ -505,7 +508,7 @@ function renderIntel(){
       ${!r.enriched?`<td colspan="4" class="muted">Not enriched yet. Open one of its cases and run passive enrichment.</td>`
         :r.rdap_error?`<td colspan="3"><span class="err">RDAP lookup failed</span> <span class="muted" style="font-size:12px">${E(r.rdap_error)}</span></td><td class="num">${r.ct_error?'<span class="err">failed</span>':r.ct_names}</td>`
         :`<td class="num">${ageCell(r)}</td>
-      <td>${E(r.registrar||'—')}<div class="muted" style="font-size:11px">${(r.status||[]).map(E).join(', ')}</div></td>
+      <td>${E(r.registrar||'—')}<div class="muted" style="font-size:11px">${statusHtml(r.status)}</div></td>
       <td class="mono" style="font-size:11.5px">${r.nameservers.map(n=>E(defang(n))).join('<br>')||'<span class="muted">—</span>'}</td>
       <td class="num">${r.ct_error?'<span class="err">failed</span>':r.ct_names}</td>`}
       <td><div class="cids">${r.cases.map(cidBtn).join('')}</div></td></tr>`).join('')}</tbody></table>`
@@ -620,6 +623,26 @@ async function loadDetection(){
   if(current===c){const n=$('#detCode');if(n)n.textContent=state.det[t]}
 }
 
+/* Plain-language RDAP fields. Status codes are EPP statuses (RFC 5731 / RFC 8056), e.g. "client transfer prohibited" or "clientTransferProhibited" */
+const DNS_HOSTS=[['domaincontrol.com','GoDaddy'],['cloudflare.com','Cloudflare'],['awsdns','Amazon Route 53'],['azure-dns','Microsoft Azure'],['googledomains.com','Google'],['google.com','Google'],
+  ['registrar-servers.com','Namecheap'],['nsone.net','NS1'],['dnsmadeeasy.com','DNS Made Easy'],['ultradns','UltraDNS'],['akam.net','Akamai'],['hostgator.com','HostGator'],['bluehost.com','Bluehost'],
+  ['name.com','Name.com'],['porkbun.com','Porkbun'],['dynect.net','Oracle Dyn'],['wixdns.net','Wix'],['squarespacedns.com','Squarespace'],['digitalocean.com','DigitalOcean'],['linode.com','Akamai Linode'],['hetzner','Hetzner'],['ovh.net','OVHcloud']];
+const dnsHost=ns=>{const h=new Set(ns.map(n=>String(n).toLowerCase()).map(n=>(DNS_HOSTS.find(([k])=>n.includes(k))||[])[1]).filter(Boolean));return [...h].join(', ')};
+function statusSummary(list){
+  const norm=s=>String(s).toLowerCase().replace(/[\s_-]+/g,'');const lock={client:[],server:[]},out=[];
+  for(const raw of list||[]){const s=norm(raw),m=s.match(/^(client|server)(delete|renew|transfer|update)prohibited$/);
+    if(m){lock[m[1]].push(m[2]);continue}
+    const known={ok:['Active, no restrictions'],active:['Active, no restrictions'],
+      clienthold:['On hold by registrar: domain does not resolve (often an abuse suspension)',1],serverhold:['On hold by registry: domain does not resolve (often an abuse suspension)',1],
+      addperiod:['Recently registered (within the 5-day add grace period)',1],pendingdelete:['Expired, pending deletion',1],redemptionperiod:['Expired, in redemption period',1],
+      inactive:['Inactive: no name servers assigned',1],pendingtransfer:['Transfer to another registrar in progress',1],autorenewperiod:['Recently auto-renewed'],renewperiod:['Recently renewed'],transferperiod:['Recently transferred',1],
+      pendingcreate:['Registration pending'],pendingupdate:['Update pending'],pendingrenew:['Renewal pending'],associated:['Linked to other registry objects'],locked:['Locked']}[s];
+    out.push(known?{t:known[0],warn:!!known[1],raw}:{t:String(raw),raw})}
+  if(lock.server.length)out.unshift({t:'Registry lock: '+lock.server.join(', '),raw:'server*Prohibited'});
+  if(lock.client.length)out.unshift({t:'Registrar lock: '+lock.client.join(', '),raw:'client*Prohibited'});
+  return out;
+}
+const statusHtml=list=>statusSummary(list).map(x=>x.warn?`<span style="color:var(--crit)">${E(x.t)}</span>`:E(x.t)).join('<br>');
 /* Passive enrichment card for one domain from POST /api/cases/{id}/enrich */
 function intelCard(d,x){
   const rd=x.rdap||{},ct=x.certificates||{},vt=x.virustotal||{};
@@ -631,8 +654,12 @@ function intelCard(d,x){
     <div class="mono">${E(defang(d))}</div>
     ${rd.error?`<div class="muted" style="font-size:12px">${E(rd.error)}</div>`:`
       ${age!=null?`<div><span class="age">${age}</span> <span class="muted">days old · registered ${E(String(reg.eventDate).slice(0,10))}</span></div>`:'<div class="muted">No registration date in RDAP record</div>'}
-      <div class="muted" style="font-size:12px">${E(rd.handle||'')}${rd.status&&rd.status.length?' · '+rd.status.map(E).join(', '):''}</div>
-      ${rd.nameservers&&rd.nameservers.length?`<div class="mono muted" style="font-size:11.5px">NS ${rd.nameservers.map(n=>E(defang(n))).join(', ')}</div>`:''}`}
+      <dl class="rd">
+        ${rd.registrar?`<dt>Registrar</dt><dd>${E(rd.registrar)}</dd>`:''}
+        ${rd.status&&rd.status.length?`<dt>Status</dt><dd title="Raw RDAP status: ${E(rd.status.join(', '))}. Locks are a normal anti-hijacking setting on most established domains.">${statusHtml(rd.status)}</dd>`:''}
+        ${rd.nameservers&&rd.nameservers.length?`<dt>Name servers</dt><dd><span class="mono" style="font-size:11.5px">${rd.nameservers.map(n=>E(defang(String(n).toLowerCase()))).join('<br>')}</span>${dnsHost(rd.nameservers)?`<div class="muted">DNS hosted by ${E(dnsHost(rd.nameservers))}</div>`:''}</dd>`:''}
+        ${rd.handle?`<dt>Registry ID</dt><dd class="mono muted" style="font-size:11px">${E(rd.handle)}</dd>`:''}
+      </dl>`}
     <div class="src" style="margin-top:4px"><span>crt.sh</span><span>${ct.error?'<span class="err">lookup failed</span>':names.length+' names'}</span></div>
     ${ct.error?`<div class="muted" style="font-size:12px">${E(ct.error)}</div>`:`<div class="mono" style="font-size:11.5px;max-height:120px;overflow:auto">${names.slice(0,25).map(n=>E(defang(n))).join('<br>')||'<span class="muted">No certificates logged</span>'}${names.length>25?`<br><span class="muted">+${names.length-25} more</span>`:''}</div>`}
     ${vt.configured?`<div class="src" style="margin-top:4px"><span>VirusTotal</span><span>${vt.error?'<span class="err">lookup failed</span>':'reputation '+E(vt.reputation??'n/a')}</span></div>
