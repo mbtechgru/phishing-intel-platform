@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Secrets
+.env
+
+# Case evidence (original emails, attachments, reports)
+cases/
+
+# macOS
+.DS_Store
