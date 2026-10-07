@@ -504,7 +504,7 @@ function renderIntel(){
   const ageCell=r=>r.age_days==null?'<span class="muted">unknown</span>':`${r.newly_registered?`<span class="young"><span aria-hidden="true">▲</span> ${r.age_days} d</span>`:`${r.age_days} d`}<div class="muted" style="font-size:11px">${E(r.registered)}</div>`;
   $('#intelTable').innerHTML=!x.domains.length?'<div class="empty">No domains yet. Upload an .eml on the Cases view to start.</div>'
     :shown.length?`<table class="ioc"><thead><tr><th>Domain</th><th>Age</th><th>Registrar</th><th>Name servers</th><th>CT names</th><th>Cases</th></tr></thead><tbody>${shown.map(r=>`<tr>
-      <td class="mono">${E(defang(r.domain))}${r.vt_malicious?`<div class="young" style="font-size:11px">VirusTotal: ${E(r.vt_malicious)} malicious</div>`:''}</td>
+      <td class="mono">${E(defang(r.domain))}${(r.hostnames||[]).length?`<div class="muted" style="font-size:11px">${r.hostnames.map(h=>E(defang(h))).join('<br>')}</div>`:''}${r.vt_malicious?`<div class="young" style="font-size:11px">VirusTotal: ${E(r.vt_malicious)} malicious</div>`:''}</td>
       ${!r.enriched?`<td colspan="4" class="muted">Not enriched yet. Open one of its cases and run passive enrichment.</td>`
         :r.rdap_error?`<td colspan="3"><span class="err">RDAP lookup failed</span> <span class="muted" style="font-size:12px">${E(r.rdap_error)}</span></td><td class="num">${r.ct_error?'<span class="err">failed</span>':r.ct_names}</td>`
         :`<td class="num">${ageCell(r)}</td>
@@ -644,7 +644,10 @@ function statusSummary(list){
 }
 const statusHtml=list=>statusSummary(list).map(x=>x.warn?`<span style="color:var(--crit)">${E(x.t)}</span>`:E(x.t)).join('<br>');
 /* Passive enrichment card for one domain from POST /api/cases/{id}/enrich */
-function intelCard(d,x){
+// one card per looked-up domain; older cases (before lookup_domain existed) keep one card per hostname
+function enrGroups(enr){const g=new Map();
+  Object.entries(enr).forEach(([d,x])=>{const k=x.lookup_domain||d;if(!g.has(k))g.set(k,[k,x,[]]);if(d!==k)g.get(k)[2].push(d)});return [...g.values()]}
+function intelCard(d,x,hosts=[]){   // d: domain looked up; hosts: other hostnames from the email that share it
   const rd=x.rdap||{},ct=x.certificates||{},vt=x.virustotal||{};
   const reg=(rd.events||[]).find(e=>e.eventAction==='registration');
   const age=reg?Math.round((Date.now()-new Date(reg.eventDate))/864e5):null;
@@ -652,7 +655,8 @@ function intelCard(d,x){
   return `<div class="card">
     <div class="src"><span>RDAP</span><span>${rd.error?'<span class="err">lookup failed</span>':age==null?'':age<30?'<span style="color:var(--crit)">▲</span> newly registered':'established'}</span></div>
     <div class="mono">${E(defang(d))}</div>
-    ${rd.error?`<div class="muted" style="font-size:12px">${E(rd.error)}</div>`:`
+    ${hosts.length?`<div class="muted" style="font-size:12px">Seen in this email as <span class="mono">${hosts.map(h=>E(defang(h))).join(', ')}</span></div>`:''}
+    ${rd.error?`<div class="muted" style="font-size:12px">${/\b404\b/.test(rd.error)?'No RDAP record for this domain. It may not be registered (or was deleted), or its registry does not publish RDAP. ':''}<span class="mono" style="font-size:11px">${E(rd.error)}</span></div>`:`
       ${age!=null?`<div><span class="age">${age}</span> <span class="muted">days old · registered ${E(String(reg.eventDate).slice(0,10))}</span></div>`:'<div class="muted">No registration date in RDAP record</div>'}
       <dl class="rd">
         ${rd.registrar?`<dt>Registrar</dt><dd>${E(rd.registrar)}</dd>`:''}
@@ -760,7 +764,7 @@ function renderCase(){
     <div class="sec-h"><h2>Passive enrichment</h2>
       <button class="btn${hasEnr?' ghost':''}" id="enrichBtn" ${domains.length&&!state.enriching?'':'disabled'}>${state.enriching?'Querying RDAP and crt.sh…':hasEnr?'Re-run enrichment':'Run passive enrichment'}</button></div>
     ${!domains.length?`<div class="empty">No domains to enrich. This message has no sender domain or URLs.</div>`:
-      hasEnr?`<div class="intel">${Object.entries(enr).map(([d,x])=>intelCard(d,x)).join('')}</div>
+      hasEnr?`<div class="intel">${enrGroups(enr).map(([d,x,hosts])=>intelCard(d,x,hosts)).join('')}</div>
         <div class="muted" style="font-size:12px">${c.enriched_utc?`Last run ${fmtTime(c.enriched_utc)}. `:''}${anyVt?'':'VirusTotal reputation skipped: <span class="mono">VIRUSTOTAL_API_KEY</span> not configured.'}${domains.length>10?` Only the first 10 of ${domains.length} domains are enriched.`:''}</div>`
       :`<div class="empty">Queries RDAP for registration data and crt.sh for certificate transparency names on ${Math.min(10,domains.length)} domain${domains.length>1?'s':''}. No traffic is sent to the suspect infrastructure.</div>`}
   </div>

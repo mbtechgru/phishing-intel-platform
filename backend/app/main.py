@@ -164,8 +164,9 @@ def rescore(r):
     for d,e in (r.get('enrichment') or {}).items():
         reg=registration_date((e or {}).get('rdap') or {})
         try:
-            if reg and (today-datetime.date.fromisoformat(reg)).days<NEW_DOMAIN_DAYS: young.append(d)
+            if reg and (today-datetime.date.fromisoformat(reg)).days<NEW_DOMAIN_DAYS: young.append((e or {}).get('lookup_domain') or d)
         except ValueError: pass
+    young=sorted(set(young))
     if young: sig.append({'text':f'Newly registered domain{"s" if len(young)>1 else ""} (under {NEW_DOMAIN_DAYS} days): {", ".join(sorted(young))}','points':NEW_DOMAIN_POINTS,'source':'enrichment'})
     raw=sum(x.get('points') or 0 for x in sig)
     r.update({'signals':sig,'findings':[x['text'] for x in sig],'raw_score':raw,'risk_score':min(100,raw),'severity':severity_for(raw)}); return r
@@ -282,20 +283,25 @@ def registration_date(rd):
     return None
 def intel(cases=None):
     cs=cases if cases is not None else all_cases(); doms={}; today=datetime.datetime.now(datetime.timezone.utc).date()
+    def quality(d,reg,x,when):   # prefer lookups of the registered domain itself, then ones without an RDAP error, then the newest
+        return ((x.get('lookup_domain') or d)==reg, not (x.get('rdap') or {}).get('error'), when)
     for r in cs:
         for d in r.get('domains',[]):
-            e=doms.setdefault(d,{'cases':[],'enrichment':None,'enriched_utc':''}); e['cases'].append(case_ref(r))
+            reg=registrable(d); e=doms.setdefault(reg,{'cases':{},'hostnames':set(),'enrichment':None,'enriched_utc':'','q':None})
+            e['cases'][r['case_id']]=case_ref(r); e['hostnames'].add(d)
             x=(r.get('enrichment') or {}).get(d); when=str(r.get('enriched_utc') or '')
-            if x and (e['enrichment'] is None or when>=e['enriched_utc']): e['enrichment']=x; e['enriched_utc']=when  # newest lookup wins
+            if x:
+                q=quality(d,reg,x,when)
+                if e['q'] is None or q>=e['q']: e.update(enrichment=x,enriched_utc=when,q=q)
     rows=[]
     for d,e in doms.items():
         x=e['enrichment'] or {}; rd=x.get('rdap') or {}; ct=x.get('certificates') or {}; vt=x.get('virustotal') or {}; reg=registration_date(rd); age=None
         if reg:
             try: age=(today-datetime.date.fromisoformat(reg)).days
             except ValueError: pass
-        rows.append({'domain':d,'enriched':bool(x),'enriched_utc':e['enriched_utc'] or None,'rdap_error':rd.get('error'),'registered':reg,'age_days':age,'newly_registered':age is not None and age<30,
+        rows.append({'domain':d,'hostnames':sorted(h for h in e['hostnames'] if h!=d),'enriched':bool(x),'enriched_utc':e['enriched_utc'] or None,'rdap_error':rd.get('error'),'registered':reg,'age_days':age,'newly_registered':age is not None and age<30,
             'registrar':rd.get('registrar'),'status':rd.get('status',[]),'nameservers':sorted({str(n).lower() for n in rd.get('nameservers',[]) if n}),
-            'ct_names':len(ct.get('names',[])),'ct_error':ct.get('error'),'vt_malicious':(vt.get('last_analysis_stats') or {}).get('malicious') if vt.get('configured') and not vt.get('error') else None,'cases':e['cases']})
+            'ct_names':len(ct.get('names',[])),'ct_error':ct.get('error'),'vt_malicious':(vt.get('last_analysis_stats') or {}).get('malicious') if vt.get('configured') and not vt.get('error') else None,'cases':list(e['cases'].values())})
     rows.sort(key=lambda r:(r['age_days'] is None,r['age_days'] or 0,r['domain']))
     shared=[]
     for kind,key in (('nameserver','nameservers'),('registrar','registrar')):
@@ -374,8 +380,15 @@ def corr(case_id:str): return correlations(case_id)
 def report(case_id:str): return report_html(get_case(case_id))
 @app.post('/api/cases/{case_id}/enrich')
 def enrich(case_id:str):
-    r=get_case(case_id); enrichment={}
-    for d in r.get('domains',[])[:10]: enrichment[d]={'rdap':rdap_domain(d),'certificates':crtsh(d),'virustotal':vt_domain(d)}
+    # RDAP only has records for registered domains, so www.example.com is looked up as example.com.
+    # Hostnames sharing a registered domain share one lookup; at most 10 registered domains per run.
+    r=get_case(case_id); enrichment={}; looked={}
+    for d in r.get('domains',[]):
+        reg=registrable(d)
+        if reg not in looked:
+            if len(looked)>=10: continue
+            looked[reg]={'rdap':rdap_domain(reg),'certificates':crtsh(reg),'virustotal':vt_domain(reg)}
+        enrichment[d]={**looked[reg],'lookup_domain':reg}
     r['enrichment']=enrichment; r['enriched_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat(); rescore(r); save_case(r); return enrichment
 @app.post('/api/cases/{case_id}/notes')
 def note(case_id:str,payload:dict=Body(...)):

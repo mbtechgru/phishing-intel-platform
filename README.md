@@ -66,7 +66,7 @@ The demo also includes the Intelligence and Detections views, computed in the br
 | GET | `/api/cases/{case_id}/correlations` | Other cases sharing indicators with this one, most shared first |
 | GET | `/api/cases/{case_id}/graph` | Infrastructure graph as `nodes` and `edges` |
 | GET | `/api/cases/{case_id}/report` | Printable HTML investigation report |
-| POST | `/api/cases/{case_id}/enrich` | Run RDAP (including registrar name), crt.sh and optional VirusTotal lookups (first 10 domains), then rescore the case (adds the newly registered domain signal when it applies) |
+| POST | `/api/cases/{case_id}/enrich` | Run RDAP (including registrar name), crt.sh and optional VirusTotal lookups on each domain's registered domain (`www.example.com` is looked up as `example.com`, since RDAP has no records for hostnames; up to 10 registered domains), then rescore the case (adds the newly registered domain signal when it applies) |
 | POST | `/api/cases/{case_id}/notes` | Add an analyst note: `{"text": "..."}` |
 | POST | `/api/cases/{case_id}/rescan` | Re-parse this case's preserved `original.eml` with the current rules and rescore it; status, verdict, notes, tags and enrichment are kept |
 | POST | `/api/rescan` | Rescan every case, for example after editing `rules/brands.json` or `PROTECTED_DOMAINS`. Returns the count and any failures |
