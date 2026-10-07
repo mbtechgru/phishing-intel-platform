@@ -9,7 +9,13 @@ PhishScope is a defensive phishing-investigation and passive threat-intelligence
 - URL, domain (including the From domain) and public-IP extraction
 - SPF/DKIM/DMARC and From/Reply-To mismatch findings
 - Risk score, severity, case status and analyst notes
-- MITRE ATT&CK phishing/user-execution mapping
+- Analyst verdict (malicious, suspicious, spam, benign or phishing simulation) with a required reason and change history, kept separate from the risk score
+- Newly registered domain signal: after enrichment, +20 points if any domain was registered under 30 days ago
+- Attachment risk weighting: executables, scripts, shortcuts, disk images and OneNote files (+30); HTML/SVG attachments used for credential pages and HTML smuggling (+20); macro-enabled Office files (+20); password-protected ZIP archives (+20). ZIP contents are inspected, so a shortcut hidden inside an archive is still flagged
+- Lookalike domain detection (+30) against your own domains (`PROTECTED_DOMAINS`) and commonly impersonated brands (`rules/brands.json`): character substitution (`rnicrosoft`, `paypa1`), Unicode look-alikes (punycode), names embedded in unrelated domains (`microsoft-login.net`, `login.microsoft.com.verify-acct.xyz`), near misspellings and the same name on a different domain ending
+- Sender display-name impersonation (+15): a display name such as "Microsoft 365" or your company name on mail from an unrelated domain
+- Rescan: re-parse preserved originals with the current rules, keeping status, verdict, notes, tags and enrichment
+- MITRE ATT&CK mapping: phishing, spearphishing link/attachment, user execution, HTML smuggling (T1027.006), domain acquisition (T1583.001) and impersonation (T1656)
 - Passive RDAP domain enrichment
 - Certificate Transparency enrichment via crt.sh
 - Optional VirusTotal domain reputation enrichment
@@ -35,8 +41,8 @@ The analyst console at `http://localhost:8000` is served from `frontend/index.ht
 - **Cases opened, last 14 days**: stacked by severity, with hover details and a table view
 - **Case queue**: sorted newest first, filterable by All / Open / Critical / High
 - **Intelligence** (`#intelligence`): every domain seen across cases with its registration age (newly registered domains under 30 days flagged), registrar, name servers, certificate transparency name count and the cases it appeared in, filterable by All / Newly registered / In open cases / Not enriched. It also lists name servers and registrars shared by two or more domains, and indicators recurring in two or more cases. Domains show lookup data once enrichment has been run on a case containing them. Case IDs link back to the case view.
-- **Detections** (`#detections`): choose cases by scope (Open / Critical + high / All) and tick or untick individual cases to generate one merged Sigma rule, YARA rule or STIX 2.1 bundle with duplicates removed. Sigma output carries ATT&CK tags and the STIX bundle adds attachment-hash indicators. Copy or download as `.yml`, `.yar` or `.json`. Closed cases start unticked, since false reports often contain legitimate (including your own) domains.
-- **Case view**: tags and a link to the printable report, risk meter with the 30 / 60 / 80 severity thresholds and per-signal points, SPF/DKIM/DMARC results, From vs Reply-To mismatch highlighting, MITRE ATT&CK techniques, defanged IOCs with copy-raw buttons, passive enrichment results, correlated cases, a radial infrastructure graph, Sigma / YARA / STIX 2.1 output, case status and analyst notes
+- **Detections** (`#detections`): choose cases by scope (Open / Critical + high / All) and tick or untick individual cases to generate one merged Sigma rule, YARA rule or STIX 2.1 bundle with duplicates removed. Sigma output carries ATT&CK tags and the STIX bundle adds attachment-hash indicators. Copy or download as `.yml`, `.yar` or `.json`. Closed cases and cases with a benign or simulation verdict start unticked, since their indicators are often legitimate (including your own domains).
+- **Case view**: tags and a link to the printable report, analyst verdict with reason (shown as a badge in the queue and in the printable report), a **Rescan with current rules** button, risk meter with the 30 / 60 / 80 severity thresholds and per-signal points, SPF/DKIM/DMARC results, From vs Reply-To mismatch highlighting, MITRE ATT&CK techniques, defanged IOCs with copy-raw buttons, passive enrichment results, correlated cases, a radial infrastructure graph, Sigma / YARA / STIX 2.1 output, case status and analyst notes
 
 Fonts load from Google Fonts. Without internet access the page falls back to system fonts.
 
@@ -50,25 +56,28 @@ The demo also includes the Intelligence and Detections views, computed in the br
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/health` | Version and whether VirusTotal is configured |
+| GET | `/api/health` | Version, whether VirusTotal is configured, the protected domains and the number of brands loaded from `rules/brands.json` |
 | POST | `/api/analyze` | Upload an `.eml` (multipart field `file`, 20 MB max) and create a case |
-| GET | `/api/cases` | Case summaries: id, filename, created time, risk score, severity, status, subject, sender, DMARC result, indicator count, tags |
-| GET | `/api/metrics` | Case counts by severity and status, unique and reused indicators, top reused indicators |
+| GET | `/api/cases` | Case summaries: id, filename, created time, risk score, severity, status, verdict, subject, sender, DMARC result, indicator count, tags |
+| GET | `/api/metrics` | Case counts by severity, status and verdict, unique and reused indicators, top reused indicators |
 | GET | `/api/intel` | Cross-case rollup of saved enrichment: domains with registration age, registrar, name servers and cases; shared name servers and registrars; indicators recurring in 2+ cases |
 | GET | `/api/detections?cases=id1,id2&format=sigma` | One merged Sigma (text), YARA (text) or STIX 2.1 (JSON) artifact across the listed cases; `format` is `sigma`, `yara` or `stix` |
 | GET | `/api/cases/{case_id}` | Full case report |
 | GET | `/api/cases/{case_id}/correlations` | Other cases sharing indicators with this one, most shared first |
 | GET | `/api/cases/{case_id}/graph` | Infrastructure graph as `nodes` and `edges` |
 | GET | `/api/cases/{case_id}/report` | Printable HTML investigation report |
-| POST | `/api/cases/{case_id}/enrich` | Run RDAP (including registrar name), crt.sh and optional VirusTotal lookups (first 10 domains) |
+| POST | `/api/cases/{case_id}/enrich` | Run RDAP (including registrar name), crt.sh and optional VirusTotal lookups (first 10 domains), then rescore the case (adds the newly registered domain signal when it applies) |
 | POST | `/api/cases/{case_id}/notes` | Add an analyst note: `{"text": "..."}` |
+| POST | `/api/cases/{case_id}/rescan` | Re-parse this case's preserved `original.eml` with the current rules and rescore it; status, verdict, notes, tags and enrichment are kept |
+| POST | `/api/rescan` | Rescan every case, for example after editing `rules/brands.json` or `PROTECTED_DOMAINS`. Returns the count and any failures |
+| POST | `/api/cases/{case_id}/verdict` | Record the analyst verdict: `{"verdict": "malicious", "reason": "..."}`. Verdict is `malicious`, `suspicious`, `spam`, `benign` or `simulation`; reason is required (1000 characters max). Earlier verdicts are kept in `verdict_history` |
 | POST | `/api/cases/{case_id}/status` | Set status: `new`, `investigating`, `contained` or `closed` |
 | POST | `/api/cases/{case_id}/tags` | Replace tags: `{"tags": ["..."]}` (20 max, 40 characters each) |
 | GET | `/api/cases/{case_id}/sigma` | Sigma starter rule (text) |
 | GET | `/api/cases/{case_id}/yara` | YARA starter rule (text) |
 | GET | `/api/cases/{case_id}/stix` | STIX 2.1 indicator bundle (JSON) |
 
-Case reports include `signals` (each finding with its points) and `raw_score` (the uncapped total). Reports created before this field existed still load; the dashboard shows their findings without points.
+Case reports include `signals` (each finding with its points) and `raw_score` (the uncapped total). Reports created before this field existed still load; the dashboard shows their findings without points, and enrichment does not rescore them (re-upload the `.eml` to get the newly registered domain signal).
 
 ## Run with Docker
 
@@ -87,6 +96,20 @@ VIRUSTOTAL_API_KEY=your_key_here
 ```
 
 Do not commit `.env` or API keys to source control.
+
+### Protect your own domains
+
+Set your organization's email domains in `.env` so lookalikes of them (and sender display names that use your company name) are flagged:
+
+```text
+PROTECTED_DOMAINS=example.com,example-corp.com
+```
+
+The header shows a warning chip until this is set. Restart the container after changing `.env` (`docker compose up -d`), then rescan existing cases with `curl -X POST http://localhost:8000/api/rescan`.
+
+### Maintaining detection rules
+
+`rules/brands.json` lists commonly impersonated brands and each brand's real domains, which are never flagged. Add the vendors, banks and SaaS tools your organization uses, and add a brand's legitimate domain when one is flagged by mistake. `_display_name_ignore` holds brands that are also common words or first names (such as Chase or Apple), which are checked in domains only. Docker mounts `rules/` read-only and the file is reread on every upload and rescan, so edits apply without a rebuild. Run `POST /api/rescan` to apply them to existing cases.
 
 ## Local Python run
 

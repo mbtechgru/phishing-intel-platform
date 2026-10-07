@@ -6,9 +6,9 @@ from email.parser import BytesParser
 from email.utils import parseaddr
 from urllib.parse import urlparse
 from collections import Counter
-import hashlib, re, json, uuid, datetime, ipaddress, os, socket, urllib.request, urllib.parse, html
+import hashlib, re, json, uuid, datetime, ipaddress, os, socket, urllib.request, urllib.parse, html, io, zipfile
 
-ROOT=Path(__file__).resolve().parents[2]; CASES=ROOT/'cases'; CASES.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[2]; CASES=ROOT/'cases'; CASES.mkdir(exist_ok=True); RULES=ROOT/'rules'
 VERSION='0.3.0'
 app=FastAPI(title='PhishScope', version=VERSION, description='Defensive phishing investigation, IOC correlation and passive threat-intelligence platform')
 URL_RE=re.compile(r"https?://[^\s<>\"']+", re.I); IP_RE=re.compile(r'(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])')
@@ -24,12 +24,93 @@ def public_ip(s):
 def domain_of_address(v):
     a=parseaddr(v or '')[1]; return a.rsplit('@',1)[1].lower() if '@' in a else ''
 
+# Attachment risk classes: (extensions, points, signal text). An archive is classed by its riskiest member.
+ATTACH_RISK={
+    'executable':({'exe','scr','com','pif','bat','cmd','ps1','psm1','vbs','vbe','js','jse','wsf','wsh','hta','lnk','url','iso','img','vhd','vhdx','one','onepkg','msi','msix','appx','appinstaller','jar','cpl','chm','reg','dll','xll','sct','application','scf','library-ms','search-ms'},
+                  30,'Executable, script, shortcut, disk image or OneNote attachment'),
+    'html':({'html','htm','shtml','xhtml','svg','svgz','mht','mhtml','shtm'},20,'HTML or SVG attachment (credential page or HTML smuggling)'),
+    'macro':({'docm','dotm','xlsm','xltm','xlsb','xlam','pptm','potm','ppam','ppsm','sldm'},20,'Macro-enabled Office attachment'),
+}
+ARCHIVES={'zip','rar','7z','gz','tgz','tar','cab','ace','arj','lzh','xz','bz2','z','zipx'}
+ENCRYPTED_POINTS=20
+def ext_of(name): return name.rsplit('.',1)[-1].lower() if '.' in name else ''
+def risk_class(name,ctype=''):
+    e=ext_of(name)
+    for k,(exts,_,_) in ATTACH_RISK.items():
+        if e in exts: return k
+    if ctype in ('text/html','image/svg+xml','application/xhtml+xml'): return 'html'
+    return None
+def archive_info(payload):
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as z:
+            infos=z.infolist()[:1000]
+            return {'encrypted':any(i.flag_bits & 1 for i in infos),'members':[sanitize(i.filename) for i in infos if not i.is_dir()][:100]}
+    except Exception: return None   # not a zip, or a format we can't open (rar, 7z)
+
+def load_brands():
+    try: return json.loads((RULES/'brands.json').read_text())
+    except Exception: return {}
+def protected_domains(): return sorted({d.strip().lower().rstrip('.') for d in os.getenv('PROTECTED_DOMAINS','').split(',') if d.strip()})
+MULTI_SUFFIX={'co.uk','org.uk','ac.uk','gov.uk','me.uk','com.au','net.au','org.au','co.nz','co.jp','com.br','com.mx','co.za','co.in','com.sg','com.cn','com.tr','com.ar','co.kr'}
+def registrable(d):
+    p=d.lower().rstrip('.').split('.'); n=3 if len(p)>=3 and '.'.join(p[-2:]) in MULTI_SUFFIX else 2
+    return '.'.join(p[-n:])
+def from_puny(label):
+    try: return label.encode('ascii').decode('idna') if label.startswith('xn--') else label
+    except Exception: return label
+# Map look-alike characters (Cyrillic/Greek homoglyphs, digits, rn→m ...) to one form so "paypa1" and "pаypal" both match "paypal"
+CONFUSABLE=str.maketrans({'а':'a','е':'e','о':'o','р':'p','с':'c','у':'y','х':'x','і':'i','ј':'j','ѕ':'s','ԁ':'d','ӏ':'l','һ':'h','ԛ':'q','ԝ':'w','ο':'o','α':'a','ν':'v','τ':'t','ρ':'p','ι':'i','κ':'k','ϲ':'c',
+                           '0':'o','1':'l','3':'e','4':'a','5':'s','7':'t','8':'b','$':'s','@':'a','|':'l','!':'i','i':'l','-':None,'_':None})
+def skeleton(s):
+    s=s.lower().replace('rn','m').replace('vv','w').replace('cl','d')
+    return s.translate(CONFUSABLE)
+def edit_distance(a,b):
+    prev=list(range(len(b)+1))
+    for i,ca in enumerate(a,1):
+        cur=[i]
+        for j,cb in enumerate(b,1): cur.append(min(prev[j]+1,cur[j-1]+1,prev[j-1]+(ca!=cb)))
+        prev=cur
+    return prev[-1]
+def lookalike_targets():
+    t=[(registrable(d),registrable(d).split('.')[0],'your domain',{registrable(d)}) for d in protected_domains()]
+    t+=[(b,b,'brand',{registrable(x) for x in legit}) for b,legit in load_brands().items() if not b.startswith('_')]
+    return t
+def lookalike_hits(domains):
+    targets=lookalike_targets(); legit=set().union(*[t[3] for t in targets]) if targets else set(); hits=[]
+    for d in domains:
+        reg=registrable(d)
+        if reg in legit: continue
+        label=reg.split('.')[0]; uni=from_puny(label); sk=skeleton(uni)
+        tokens={skeleton(from_puny(x)) for x in re.split(r'[.-]',d[:-len(reg)].rstrip('.')+'.'+label) if x}
+        for name,tl,kind,_ in targets:
+            tsk=skeleton(tl); why=None
+            if label==tl: why='same name on a different domain ending'
+            elif label.startswith('xn--') and sk==tsk: why=f'look-alike Unicode characters ({uni})'
+            elif sk==tsk: why='character substitution'
+            elif len(tl)>=6 and edit_distance(label,tl)<=(1 if len(tl)<9 else 2): why='one or two characters different'
+            elif len(tl)>=3 and tsk in tokens: why='name embedded in an unrelated domain'
+            if why: hits.append({'domain':d,'target':name,'kind':kind,'why':why}); break
+    return hits
+def display_name_hits(from_header):
+    name,addr=parseaddr(from_header or ''); dom=addr.rsplit('@',1)[1].lower() if '@' in addr else ''
+    if not name or not dom: return []
+    words={skeleton(w) for w in re.findall(r'[\w$@|!]+',name.lower())}; flat=skeleton(re.sub(r'\s+','',name))
+    brands=load_brands(); ignore=set(brands.get('_display_name_ignore',[])); hits=[]
+    for tname,tl,kind,legit in lookalike_targets():
+        if registrable(dom) in legit or (kind=='brand' and tl in ignore): continue
+        tsk=skeleton(tl)
+        if tsk in words or (len(tl)>=6 and tsk in flat): hits.append({'name':name,'target':tname,'kind':kind,'sender_domain':dom})
+    return hits
+
 def parse_eml(data: bytes, evidence_dir: Path|None=None):
     msg=BytesParser(policy=policy.default).parsebytes(data); headers={k:str(v) for k,v in msg.items()}; bodies=[]; attachments=[]
     for idx,p in enumerate(msg.walk(),1):
         payload=p.get_payload(decode=True) or b''
         if p.get_content_disposition()=='attachment' or p.get_filename():
             name=sanitize(p.get_filename() or f'attachment-{idx}.bin'); rec={'filename':name,'content_type':p.get_content_type(),'size':len(payload),'sha256':sha256(payload)}
+            if ext_of(name) in ARCHIVES or payload[:4]==b'PK\x03\x04':
+                info=archive_info(payload)
+                if info: rec['archive']=info
             if evidence_dir:
                 ad=evidence_dir/'attachments'; ad.mkdir(exist_ok=True); target=ad/f'{idx:02d}-{name}'; target.write_bytes(payload); rec['evidence_path']=str(target.relative_to(evidence_dir))
             attachments.append(rec)
@@ -50,11 +131,44 @@ def parse_eml(data: bytes, evidence_dir: Path|None=None):
         if f'{mech}=fail' in auth.lower(): flag(f'{mech.upper()} failed',pts)
     if urls: flag(f'{len(urls)} URL(s) found',min(15,len(urls)*3))
     if attachments: flag(f'{len(attachments)} attachment(s) found',min(20,len(attachments)*8))
+    risky={}; enc=[]
+    for a in attachments:
+        k=risk_class(a['filename'],a['content_type'])
+        if k: risky.setdefault(k,[]).append(a['filename'])
+        arc=a.get('archive') or {}
+        if arc.get('encrypted'): enc.append(a['filename'])
+        for m in arc.get('members',[]):
+            k=risk_class(m)
+            if k: risky.setdefault(k,[]).append(f"{a['filename']} → {m}")
+    for k,(_,pts,label) in ATTACH_RISK.items():
+        if k in risky: flag(f'{label}: {", ".join(risky[k][:5])}{" …" if len(risky[k])>5 else ""}',pts)
+    if enc: flag(f'Password-protected archive (contents hidden from scanning): {", ".join(enc[:5])}',ENCRYPTED_POINTS)
+    looks=lookalike_hits(domains); names=display_name_hits(headers.get('From'))
+    if looks: flag('Lookalike domain: '+'; '.join(f"{h['domain']} imitates {h['target']} ({h['why']})" for h in looks[:5]),30)
+    if names: flag('Sender display name impersonates '+', '.join(sorted({h['target'] for h in names}))+f" but mail comes from {names[0]['sender_domain']}",15)
     mitre=[{'id':'T1566','name':'Phishing'}]
     if urls: mitre.append({'id':'T1566.002','name':'Spearphishing Link'})
     if attachments: mitre.append({'id':'T1566.001','name':'Spearphishing Attachment'})
     if urls or attachments: mitre.append({'id':'T1204','name':'User Execution'})
-    return {'headers':headers,'urls':urls,'domains':domains,'ips':ips,'attachments':attachments,'findings':flags,'signals':signals,'raw_score':score,'risk_score':min(100,score),'severity':('critical' if score>=80 else 'high' if score>=60 else 'medium' if score>=30 else 'low'),'mitre':mitre}
+    if 'html' in risky: mitre.append({'id':'T1027.006','name':'HTML Smuggling'})
+    if looks: mitre.append({'id':'T1583.001','name':'Acquire Infrastructure: Domains'})
+    if names or looks: mitre.append({'id':'T1656','name':'Impersonation'})
+    return {'headers':headers,'urls':urls,'domains':domains,'ips':ips,'attachments':attachments,'findings':flags,'signals':signals,'lookalikes':looks,'impersonation':names,'raw_score':score,'risk_score':min(100,score),'severity':severity_for(score),'mitre':mitre}
+
+def severity_for(score): return 'critical' if score>=80 else 'high' if score>=60 else 'medium' if score>=30 else 'low'
+NEW_DOMAIN_DAYS=30; NEW_DOMAIN_POINTS=20
+def rescore(r):
+    # Re-applies signals that depend on enrichment. Parse-time signals are kept; enrichment ones are rebuilt each run.
+    if 'signals' not in r: return r   # reports from before per-signal points can't be rescored safely
+    sig=[x for x in r['signals'] if x.get('source')!='enrichment']; today=datetime.datetime.now(datetime.timezone.utc).date(); young=[]
+    for d,e in (r.get('enrichment') or {}).items():
+        reg=registration_date((e or {}).get('rdap') or {})
+        try:
+            if reg and (today-datetime.date.fromisoformat(reg)).days<NEW_DOMAIN_DAYS: young.append(d)
+        except ValueError: pass
+    if young: sig.append({'text':f'Newly registered domain{"s" if len(young)>1 else ""} (under {NEW_DOMAIN_DAYS} days): {", ".join(sorted(young))}','points':NEW_DOMAIN_POINTS,'source':'enrichment'})
+    raw=sum(x.get('points') or 0 for x in sig)
+    r.update({'signals':sig,'findings':[x['text'] for x in sig],'raw_score':raw,'risk_score':min(100,raw),'severity':severity_for(raw)}); return r
 
 def get_case(cid):
     p=CASES/cid/'report.json'
@@ -123,7 +237,7 @@ def graph_for(r):
 def metrics():
     cs=all_cases(); ioc=Counter()
     for r in cs: ioc.update(indicators(r))
-    return {'total_cases':len(cs),'severity':dict(Counter(r.get('severity','unknown') for r in cs)),'status':dict(Counter(r.get('status','new') for r in cs)),
+    return {'total_cases':len(cs),'severity':dict(Counter(r.get('severity','unknown') for r in cs)),'status':dict(Counter(r.get('status','new') for r in cs)),'verdict':dict(Counter((r.get('verdict') or {}).get('value') or 'none' for r in cs)),
             'total_unique_iocs':len(ioc),'reused_iocs':sum(1 for n in ioc.values() if n>1),'top_iocs':[{'indicator':k,'cases':v} for k,v in ioc.most_common(10) if v>1]}
 def report_html(r):
     esc=lambda x: html.escape(str(x if x is not None else '')); li=lambda items,empty: ''.join(f'<li>{x}</li>' for x in items) or f'<li class=m>{empty}</li>'
@@ -133,11 +247,12 @@ def report_html(r):
     corr=li([f'{esc(x["case_id"])} ({esc(x["severity"])}) — {x["shared_count"]} shared IOC(s)' for x in correlations(r['case_id'])],'No correlated cases')
     mitre=li([esc(x['id'])+' — '+esc(x['name']) for x in r.get('mitre',[])],'None')
     notes=li([esc(n.get('created_utc'))+': '+esc(n.get('text')) for n in r.get('notes',[])],'None')
-    tags=', '.join(esc(t) for t in r.get('tags',[])) or 'none'
+    tags=', '.join(esc(t) for t in r.get('tags',[])) or 'none'; v=r.get('verdict') or {}
+    verdict=f"{esc(str(v.get('value')).upper())} — {esc(v.get('reason'))} <span class=m>({esc(v.get('set_utc'))})</span>" if v.get('value') else '<span class=m>No verdict recorded</span>'
     return f'''<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>PhishScope {esc(r['case_id'])}</title>
 <style>body{{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:900px;margin:40px auto;padding:0 16px;color:#17202a;background:#fff;line-height:1.45}}h1{{border-bottom:3px solid #17202a;padding-bottom:10px}}.score{{font-size:28px;font-weight:bold}}code{{word-break:break-all}}.m{{color:#6c7f92}}@media print{{button{{display:none}}}}</style>
 <button onclick="print()">Print / Save PDF</button><h1>PhishScope Investigation Report</h1>
-<p><b>Case:</b> {esc(r['case_id'])}<br><b>Subject:</b> {esc(h.get('Subject'))}<br><b>From:</b> {esc(h.get('From'))}<br><b>Created:</b> {esc(r.get('created_utc'))}<br><b>Status:</b> {esc(r.get('status'))}<br><b>Tags:</b> {tags}<br><b>Evidence SHA-256:</b> <code>{esc(r.get('file_sha256'))}</code></p>
+<p><b>Case:</b> {esc(r['case_id'])}<br><b>Subject:</b> {esc(h.get('Subject'))}<br><b>From:</b> {esc(h.get('From'))}<br><b>Created:</b> {esc(r.get('created_utc'))}<br><b>Status:</b> {esc(r.get('status'))}<br><b>Verdict:</b> {verdict}<br><b>Tags:</b> {tags}<br><b>Evidence SHA-256:</b> <code>{esc(r.get('file_sha256'))}</code></p>
 <p class=score>Risk {esc(r.get('risk_score'))}/100 — {esc(str(r.get('severity','')).upper())}</p>
 <h2>Findings</h2><ul>{sig}</ul><h2>Indicators</h2><ul>{iocs}</ul><h2>MITRE ATT&amp;CK</h2><ul>{mitre}</ul><h2>Cross-case correlation</h2><ul>{corr}</ul><h2>Analyst notes</h2><ul>{notes}</ul>
 <hr><small>Generated by PhishScope v{VERSION}. Defensive research only.</small></html>'''
@@ -160,7 +275,7 @@ def stix_bundle(r):
 
 CASE_ID_RE=re.compile(r'[A-Za-z0-9_-]{1,64}')
 SEV_RANK=('critical','high','medium','low')
-def case_ref(r): return {'case_id':r['case_id'],'subject':r.get('headers',{}).get('Subject',''),'severity':r.get('severity'),'status':r.get('status','new')}
+def case_ref(r): return {'case_id':r['case_id'],'subject':r.get('headers',{}).get('Subject',''),'severity':r.get('severity'),'status':r.get('status','new'),'verdict':(r.get('verdict') or {}).get('value')}
 def registration_date(rd):
     for e in rd.get('events') or []:
         if e.get('eventAction')=='registration': return str(e.get('eventDate',''))[:10] or None
@@ -229,7 +344,7 @@ def combined_stix(cs):
 @app.get('/',response_class=HTMLResponse)
 def home(): return (ROOT/'frontend'/'index.html').read_text()
 @app.get('/api/health')
-def health(): return {'name':'PhishScope','version':VERSION,'virustotal_configured':bool(os.getenv('VIRUSTOTAL_API_KEY'))}
+def health(): return {'name':'PhishScope','version':VERSION,'virustotal_configured':bool(os.getenv('VIRUSTOTAL_API_KEY')),'protected_domains':protected_domains(),'brands':sum(1 for k in load_brands() if not k.startswith('_'))}
 @app.post('/api/analyze')
 async def analyze(file:UploadFile=File(...)):
     if not (file.filename or '').lower().endswith('.eml'): raise HTTPException(400,'Upload an .eml file')
@@ -244,7 +359,7 @@ def cases():
         try:
             h=r.get('headers',{}); row={k:r.get(k) for k in ('case_id','filename','created_utc','risk_score','severity','status')}
             m=re.search(r'dmarc=(\w+)',h.get('Authentication-Results','').lower())
-            row.update({'subject':h.get('Subject',''),'sender':h.get('From',''),'dmarc':m.group(1) if m else 'none','ioc_count':sum(len(r.get(k,[])) for k in ('urls','domains','ips','attachments')),'tags':r.get('tags',[])}); out.append(row)
+            row.update({'subject':h.get('Subject',''),'sender':h.get('From',''),'dmarc':m.group(1) if m else 'none','ioc_count':sum(len(r.get(k,[])) for k in ('urls','domains','ips','attachments')),'tags':r.get('tags',[]),'verdict':(r.get('verdict') or {}).get('value')}); out.append(row)
         except: pass
     return out
 @app.get('/api/metrics')
@@ -261,7 +376,7 @@ def report(case_id:str): return report_html(get_case(case_id))
 def enrich(case_id:str):
     r=get_case(case_id); enrichment={}
     for d in r.get('domains',[])[:10]: enrichment[d]={'rdap':rdap_domain(d),'certificates':crtsh(d),'virustotal':vt_domain(d)}
-    r['enrichment']=enrichment; r['enriched_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat(); save_case(r); return enrichment
+    r['enrichment']=enrichment; r['enriched_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat(); rescore(r); save_case(r); return enrichment
 @app.post('/api/cases/{case_id}/notes')
 def note(case_id:str,payload:dict=Body(...)):
     r=get_case(case_id); txt=str(payload.get('text','')).strip()
@@ -272,6 +387,28 @@ def status(case_id:str,payload:dict=Body(...)):
     r=get_case(case_id); s=str(payload.get('status','')).lower()
     if s not in ('new','investigating','contained','closed'): raise HTTPException(400,'Invalid status')
     r['status']=s; save_case(r); return {'status':s}
+RESCAN_KEYS=('headers','urls','domains','ips','attachments','findings','signals','lookalikes','impersonation','raw_score','risk_score','severity','mitre')
+def rescan_case(r):
+    # Re-parse the preserved original with the current rules; status, verdict, notes, tags and enrichment are kept
+    d=CASES/r['case_id']; fresh=parse_eml((d/'original.eml').read_bytes(),d)
+    r.update({k:fresh[k] for k in RESCAN_KEYS}); r['rescanned_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat(); rescore(r); save_case(r); return r
+@app.post('/api/cases/{case_id}/rescan')
+def rescan(case_id:str): return rescan_case(get_case(case_id))
+@app.post('/api/rescan')
+def rescan_all():
+    done=0; failed=[]
+    for r in all_cases():
+        try: rescan_case(r); done+=1
+        except Exception as e: failed.append({'case_id':r.get('case_id'),'error':str(e)[:180]})
+    return {'rescanned':done,'failed':failed}
+VERDICTS=('malicious','suspicious','spam','benign','simulation')
+@app.post('/api/cases/{case_id}/verdict')
+def verdict(case_id:str,payload:dict=Body(...)):
+    r=get_case(case_id); v=str(payload.get('verdict','')).lower(); reason=str(payload.get('reason','')).strip()
+    if v not in VERDICTS: raise HTTPException(400,'verdict must be one of: '+', '.join(VERDICTS))
+    if not reason: raise HTTPException(400,'Give a reason for the verdict')
+    rec={'value':v,'reason':reason[:1000],'set_utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    r['verdict']=rec; r.setdefault('verdict_history',[]).append(rec); save_case(r); return rec
 @app.post('/api/cases/{case_id}/tags')
 def tags(case_id:str,payload:dict=Body(...)):
     r=get_case(case_id); raw=payload.get('tags',[])

@@ -102,6 +102,12 @@ table.data th:first-child,table.data td:first-child{text-align:left}
 .row .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-top:2px;flex-wrap:wrap}
 .st{font-size:11px;border-radius:4px;padding:1px 6px;border:1px solid var(--line);color:var(--ink-2);text-transform:capitalize}
 .st.new{border-color:var(--accent);color:var(--accent)}
+.vd{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-2)}
+.vd i{width:7px;height:7px;border-radius:50%;flex:none}
+.verdict{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.verdict .cur{display:flex;flex-direction:column;gap:2px;font-size:13px}
+.verdict textarea{min-height:56px}
+.verdict .seg{align-self:flex-start}
 
 /* case workbench */
 .case{min-width:0;display:flex;flex-direction:column;gap:16px}
@@ -260,6 +266,7 @@ table.ioc td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
       <span class="chip" title="Queried on demand during passive enrichment"><span class="dot" id="rdapDot"></span>RDAP</span>
       <span class="chip" title="Queried on demand during passive enrichment"><span class="dot" id="crtDot"></span>crt.sh</span>
       <span class="chip" id="vtChip" title="Set VIRUSTOTAL_API_KEY in .env to enable"><span class="dot"></span>VirusTotal</span>
+      <span class="chip" id="protChip" title="Set PROTECTED_DOMAINS in .env to detect lookalikes of your own domains"><span class="dot"></span>Protected domains</span>
     </div>
   </div>
 </header>
@@ -348,6 +355,8 @@ table.ioc td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 (function(){
 const SEV={critical:{c:'var(--crit)',label:'Critical',icon:'▲'},high:{c:'var(--serious)',label:'High',icon:'◆'},medium:{c:'var(--warn)',label:'Medium',icon:'●'},low:{c:'var(--good)',label:'Low',icon:'▼'}};
 const SEV_ORDER=['critical','high','medium','low'];
+const VERDICT={malicious:['var(--crit)','Malicious'],suspicious:['var(--serious)','Suspicious'],spam:['var(--warn)','Spam'],benign:['var(--good)','Benign'],simulation:['var(--accent)','Simulation']};
+const vdTag=v=>VERDICT[v]?`<span class="vd"><i style="background:${VERDICT[v][0]}"></i>${VERDICT[v][1]}</span>`:'';
 const STATUSES=['new','investigating','contained','closed'];
 const E=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const defang=s=>String(s).replace(/^http/i,'hxxp').replace(/\./g,'[.]');
@@ -359,7 +368,7 @@ async function api(u,o){const r=await fetch(u,o),ct=r.headers.get('content-type'
 let CASES=[];           // summaries from GET /api/cases
 let METRICS=null;       // GET /api/metrics
 let current=null;       // full report from GET /api/cases/{id}, plus .corr and .graph once loaded
-let state={sel:null,filter:'all',iocTab:'urls',detTab:'sigma',det:{},enriching:false,view:'cases',intelFilter:'all',detScope:'open',detPick:{},detTabAll:'sigma'};
+let state={vDraft:{},sel:null,filter:'all',iocTab:'urls',detTab:'sigma',det:{},enriching:false,view:'cases',intelFilter:'all',detScope:'open',detPick:{},detTabAll:'sigma'};
 let INTEL=null;          // GET /api/intel, refetched each time the Intelligence view opens
 try{state.filter=localStorage.getItem('ps-filter')||'all';state.sel=localStorage.getItem('ps-case')}catch{}
 
@@ -443,7 +452,7 @@ function renderQueue(){
       <span class="stripe" style="background:${SEV[s].c}"></span>
       <span class="sc">${E(c.risk_score)}</span>
       <span style="min-width:0"><div class="subj">${E(c.subject||c.filename||'(no subject)')}</div>
-      <div class="meta"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span><span class="st ${E(c.status)}">${E(c.status)}</span><span>${fmtTime(c.created_utc)}</span>${(c.tags||[]).map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
+      <div class="meta"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span><span class="st ${E(c.status)}">${E(c.status)}</span>${vdTag(c.verdict)}<span>${fmtTime(c.created_utc)}</span>${(c.tags||[]).map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
     </div>`}).join(''):`<div class="empty" style="margin:14px">${CASES.length?'No cases match this filter.':'No cases yet. Drop an .eml above to open the first one.'}</div>`;
   $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>openCase(r.dataset.id);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
 }
@@ -455,7 +464,7 @@ async function loadCases(){
 }
 async function openCase(id,quiet){   // quiet: load without leaving the current view (boot)
   try{current=await api('/api/cases/'+encodeURIComponent(id))}catch(e){toast(e.message);return}
-  state.sel=id;state.iocTab='urls';state.det={};try{localStorage.setItem('ps-case',id)}catch{}
+  state.sel=id;state.iocTab='urls';state.det={};state.vDraft={};try{localStorage.setItem('ps-case',id)}catch{}
   const jump=!quiet&&state.view!=='cases';if(jump){window.history.pushState(null,'','#cases');setView()}
   renderQueue();renderCase();loadDetection();loadRelations();if(jump)$('#case').scrollIntoView({block:'start'});
 }
@@ -514,8 +523,8 @@ function renderIntel(){
 }
 
 /* Detections: GET /api/detections merges the selected cases into one rule or bundle */
-// closed cases start unticked: they are often false reports whose indicators are legitimate
-const picked=c=>state.detPick[c.case_id]??c.status!=='closed';
+// closed cases and benign / simulation verdicts start unticked: their indicators are often legitimate
+const picked=c=>state.detPick[c.case_id]??(c.status!=='closed'&&!['benign','simulation'].includes(c.verdict));
 function renderDetections(){
   const scopes=[['open','Open'],['hot','Critical + high'],['all','All']];
   $('#detScope').innerHTML=scopes.map(([k,l])=>`<button data-ds="${k}" aria-pressed="${state.detScope===k}">${l}</button>`).join('');
@@ -523,7 +532,7 @@ function renderDetections(){
   const inScope=CASES.filter(c=>state.detScope==='all'||(state.detScope==='open'?c.status!=='closed':c.severity==='critical'||c.severity==='high'))
     .sort((a,b)=>(b.risk_score||0)-(a.risk_score||0));
   $('#detPick').innerHTML=inScope.length?inScope.map(c=>{const s=sevOf(c.severity);return `<label><input type="checkbox" data-pick="${E(c.case_id)}" ${picked(c)?'checked':''}>
-      <span style="min-width:0"><div class="subj">${E(c.subject||c.filename||'(no subject)')}</div><div class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span> · ${E(c.status)}</div></span>
+      <span style="min-width:0"><div class="subj">${E(c.subject||c.filename||'(no subject)')}</div><div class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center"><span aria-hidden="true" style="color:${SEV[s].c}">${SEV[s].icon}</span><span class="mono">${E(c.case_id)}</span> · ${E(c.status)} ${vdTag(c.verdict)}</div></span>
       <span class="n">${E(c.ioc_count)} IOCs</span></label>`}).join(''):`<div class="empty">${CASES.length?'No cases in this scope.':'No cases yet.'}</div>`;
   $('#detPick').querySelectorAll('[data-pick]').forEach(b=>b.onchange=()=>{state.detPick[b.dataset.pick]=b.checked;renderDetections()});
   const tabs=[['sigma','Sigma rule'],['yara','YARA rule'],['stix','STIX 2.1 bundle']];
@@ -674,8 +683,20 @@ function renderCase(){
       <dt>SHA-256</dt><dd class="mono">${E(c.file_sha256)}</dd>
       <dt>Tags</dt><dd><div class="tags" id="tagBox">${(c.tags||[]).map(t=>`<span class="tagp">${E(t)}<button data-tag="${E(t)}" aria-label="Remove tag ${E(t)}">×</button></span>`).join('')}<input id="tagIn" maxlength="40" placeholder="Add tag, press Enter" aria-label="Add tag"></div></dd>
     </dl>
-    <div><a class="btn ghost" style="text-decoration:none;display:inline-block" href="/api/cases/${encodeURIComponent(c.case_id)}/report" target="_blank" rel="noopener">Open printable report</a></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><a class="btn ghost" style="text-decoration:none;display:inline-block" href="/api/cases/${encodeURIComponent(c.case_id)}/report" target="_blank" rel="noopener">Open printable report</a>
+      <button class="btn ghost" id="rescanBtn" type="button" title="Re-parse the preserved original with the current detection rules. Status, verdict, notes, tags and enrichment are kept.">Rescan with current rules</button>
+      ${c.rescanned_utc?`<span class="muted" style="font-size:12px">Last rescanned ${fmtTime(c.rescanned_utc)}</span>`:''}</div>
   </div>
+
+  <form class="panel verdict" id="verdictForm">
+    <div class="sec-h"><h2>Analyst verdict</h2><span class="muted" style="font-size:12px">The risk score measures suspicion. The verdict is your conclusion.</span></div>
+    ${c.verdict&&c.verdict.value?`<div class="cur"><div>${vdTag(c.verdict.value)} <span class="muted" style="font-size:12px">set ${fmtTime(c.verdict.set_utc)}${(c.verdict_history||[]).length>1?` · changed ${c.verdict_history.length-1}×`:''}</span></div><div>${E(c.verdict.reason)}</div></div>`
+      :'<div class="muted" style="font-size:13px">No verdict yet.</div>'}
+    <div class="seg" id="verdictSeg" role="radiogroup" aria-label="Verdict">${Object.entries(VERDICT).map(([k,[,l]])=>`<button type="button" role="radio" data-v="${k}" aria-pressed="${(state.vDraft.value||c.verdict?.value)===k}" aria-checked="${(state.vDraft.value||c.verdict?.value)===k}">${l}</button>`).join('')}</div>
+    <label for="verdictReason" class="label">Reason</label>
+    <textarea id="verdictReason" maxlength="1000" placeholder="What evidence decided it? e.g. newly registered lookalike domain, credential form, DMARC fail">${E(state.vDraft.reason??'')}</textarea>
+    <div><button class="btn" type="submit">${c.verdict&&c.verdict.value?'Update verdict':'Record verdict'}</button></div>
+  </form>
 
   <div class="grid2">
     <div class="panel sec">
@@ -747,6 +768,19 @@ function renderCase(){
     try{await api(`/api/cases/${encodeURIComponent(c.case_id)}/status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:b.dataset.s})});
       c.status=b.dataset.s;const row=CASES.find(x=>x.case_id===c.case_id);if(row)row.status=c.status;
       renderKpis();renderQueue();renderCase();toast(`Status set to ${c.status}`)}catch(e){toast(e.message)}});
+  $('#rescanBtn').onclick=async e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Rescanning…';const before=c.risk_score;
+    try{const fresh=await api(`/api/cases/${encodeURIComponent(c.case_id)}/rescan`,{method:'POST'});Object.assign(c,fresh);state.det={};await loadCases();
+      toast(before===c.risk_score?`Rescanned. Score unchanged at ${c.risk_score}`:`Rescanned. Score ${before} → ${c.risk_score}`)}catch(err){toast(err.message)}
+    if(current===c){renderCase();loadDetection();loadRelations()}};
+  $('#verdictSeg').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.vDraft.value=b.dataset.v;
+    $('#verdictSeg').querySelectorAll('button').forEach(o=>{const on=o===b;o.setAttribute('aria-pressed',on);o.setAttribute('aria-checked',on)})});
+  $('#verdictReason').oninput=e=>{state.vDraft.reason=e.target.value};
+  $('#verdictForm').onsubmit=async e=>{e.preventDefault();
+    const v=state.vDraft.value||c.verdict?.value,reason=(state.vDraft.reason??'').trim();
+    if(!v){toast('Pick a verdict');return}if(!reason){toast('Add a reason');$('#verdictReason').focus();return}
+    try{c.verdict=await api(`/api/cases/${encodeURIComponent(c.case_id)}/verdict`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({verdict:v,reason})});
+      (c.verdict_history=c.verdict_history||[]).push(c.verdict);state.vDraft={};const row=CASES.find(x=>x.case_id===c.case_id);if(row)row.verdict=v;
+      renderQueue();renderCase();toast(`Verdict: ${VERDICT[v][1]}`)}catch(e){toast(e.message)}};
   document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{state.iocTab=b.dataset.t;renderCase()});
   document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{state.detTab=b.dataset.d;renderCase();loadDetection()});
   document.querySelectorAll('.copy[data-v]').forEach(b=>b.onclick=()=>copy(b.dataset.v,b.closest('tr').querySelector('.mono')));
@@ -755,7 +789,9 @@ function renderCase(){
     state.enriching=true;renderCase();
     try{c.enrichment=await api(`/api/cases/${encodeURIComponent(c.case_id)}/enrich`,{method:'POST'});c.enriched_utc=new Date().toISOString();setSourceDots(c.enrichment);toast('Enrichment complete')}
     catch(e){toast(e.message)}
-    state.enriching=false;if(current===c){renderCase();loadRelations()}
+    state.enriching=false;
+    try{const fresh=await api('/api/cases/'+encodeURIComponent(c.case_id));Object.assign(c,fresh);await loadCases()}catch{}  // score may change after enrichment
+    if(current===c){renderCase();loadRelations()}
   };
   const tagIn=$('#tagIn');
   tagIn.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const t=tagIn.value.trim();if(!t)return;
@@ -789,7 +825,9 @@ drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)analyze(f)
 (async()=>{
   renderCase();setView();
   api('/api/health').then(h=>{$('#apiChip .dot').style.background='var(--good)';$('#ver').textContent='v'+h.version;
-    const vt=$('#vtChip');vt.querySelector('.dot').style.background=h.virustotal_configured?'var(--good)':'';vt.lastChild.textContent=h.virustotal_configured?'VirusTotal':'VirusTotal off'})
+    const vt=$('#vtChip');vt.querySelector('.dot').style.background=h.virustotal_configured?'var(--good)':'';vt.lastChild.textContent=h.virustotal_configured?'VirusTotal':'VirusTotal off';
+    const pd=h.protected_domains||[],pc=$('#protChip');pc.querySelector('.dot').style.background=pd.length?'var(--good)':'var(--warn)';
+    pc.lastChild.textContent=pd.length?`${pd.length} protected domain${pd.length>1?'s':''}`:'Protected domains not set';if(pd.length)pc.title='Lookalikes checked for: '+pd.join(', ')+` and ${h.brands} brands in rules/brands.json`})
     .catch(()=>{$('#apiChip .dot').style.background='var(--crit)';$('#apiChip').lastChild.textContent='API unreachable'});
   try{await loadCases()}catch(e){$('#queue').innerHTML=`<div class="empty" style="margin:14px">Could not load cases: ${E(e.message)}</div>`;return}
   const pick=CASES.find(c=>c.case_id===state.sel)||CASES[0];

@@ -5,6 +5,8 @@ services:
       - "8000:8000"
     environment:
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - PROTECTED_DOMAINS=${PROTECTED_DOMAINS:-}
     volumes:
       - ./cases:/app/cases
+      - ./rules:/app/rules:ro
     restart: unless-stopped

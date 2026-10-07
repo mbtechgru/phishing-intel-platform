@@ -99,6 +99,12 @@ table.data th:first-child,table.data td:first-child{text-align:left}
 .row .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-top:2px;flex-wrap:wrap}
 .st{font-size:11px;border-radius:4px;padding:1px 6px;border:1px solid var(--line);color:var(--ink-2);text-transform:capitalize}
 .st.new{border-color:var(--accent);color:var(--accent)}
+.vd{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-2)}
+.vd i{width:7px;height:7px;border-radius:50%;flex:none}
+.verdict{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.verdict .cur{display:flex;flex-direction:column;gap:2px;font-size:13px}
+.verdict textarea{min-height:56px}
+.verdict .seg{align-self:flex-start}
 
 /* case workbench */
 .case{min-width:0;display:flex;flex-direction:column;gap:16px}
@@ -340,6 +346,8 @@ table.ioc td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 (function(){
 const SEV={critical:{c:'var(--crit)',label:'Critical',icon:'▲'},high:{c:'var(--serious)',label:'High',icon:'◆'},medium:{c:'var(--warn)',label:'Medium',icon:'●'},low:{c:'var(--good)',label:'Low',icon:'▼'}};
 const SEV_ORDER=['critical','high','medium','low'];
+const VERDICT={malicious:['var(--crit)','Malicious'],suspicious:['var(--serious)','Suspicious'],spam:['var(--warn)','Spam'],benign:['var(--good)','Benign'],simulation:['var(--accent)','Simulation']};
+const vdTag=v=>VERDICT[v]?`<span class="vd"><i style="background:${VERDICT[v][0]}"></i>${VERDICT[v][1]}</span>`:'';
 const STATUSES=['new','investigating','contained','closed'];
 const E=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const defang=s=>String(s).replace(/^http/i,'hxxp').replace(/\./g,'[.]');
@@ -347,18 +355,67 @@ const $=s=>document.querySelector(s);
 
 /* Scoring mirrors backend/app/main.py parse_eml() */
 function domainOf(v){const m=String(v||'').match(/<?([^<>\s"]+@[^<>\s"]+)>?\s*$/);return m?m[1].split('@').pop().toLowerCase():''}
+/* Attachment risk classes and lookalike detection mirror backend/app/main.py; the brand list is rules/brands.json */
+const ATTACH_RISK={
+  executable:[new Set('exe scr com pif bat cmd ps1 psm1 vbs vbe js jse wsf wsh hta lnk url iso img vhd vhdx one onepkg msi msix appx appinstaller jar cpl chm reg dll xll sct application scf library-ms search-ms'.split(' ')),30,'Executable, script, shortcut, disk image or OneNote attachment'],
+  html:[new Set('html htm shtml xhtml svg svgz mht mhtml shtm'.split(' ')),20,'HTML or SVG attachment (credential page or HTML smuggling)'],
+  macro:[new Set('docm dotm xlsm xltm xlsb xlam pptm potm ppam ppsm sldm'.split(' ')),20,'Macro-enabled Office attachment'],
+};
+const extOf=n=>n.includes('.')?n.split('.').pop().toLowerCase():'';
+const riskClass=(n,t='')=>Object.keys(ATTACH_RISK).find(k=>ATTACH_RISK[k][0].has(extOf(n)))||(['text/html','image/svg+xml','application/xhtml+xml'].includes(t)?'html':null);
+const PROTECTED=['corp.example'];   // in production: PROTECTED_DOMAINS in .env
+const BRANDS={"_comment":"Commonly impersonated brands. Key = name to look for in domains and sender display names; value = that brand's real registrable domains (never flagged). Edit freely: PhishScope rereads this file on every upload and rescan. _display_name_ignore lists brands that are also common words or first names, so they are only checked in domains, not in sender display names.","_display_name_ignore":["chase","apple","amazon","zoom","slack","irs","google","adobe"],"microsoft":["microsoft.com","microsoftonline.com","office.com","office365.com","live.com","outlook.com","sharepoint.com","onedrive.com","msft.net","azure.com","windows.net","microsoft365.com","cloud.microsoft"],"office365":["office365.com","office.com","microsoft.com"],"outlook":["outlook.com","live.com","microsoft.com","office.com"],"sharepoint":["sharepoint.com","microsoft.com"],"onedrive":["onedrive.com","live.com","microsoft.com"],"docusign":["docusign.com","docusign.net"],"adobe":["adobe.com","adobesign.com","echosign.com","adobelogin.com"],"dropbox":["dropbox.com","dropboxmail.com"],"google":["google.com","gmail.com","googlemail.com","youtube.com","googleusercontent.com","withgoogle.com"],"apple":["apple.com","icloud.com","me.com"],"amazon":["amazon.com","amazonaws.com","amazonses.com","aws.amazon.com","amazon.co.uk"],"paypal":["paypal.com","paypal.me"],"okta":["okta.com","oktapreview.com"],"zoom":["zoom.us","zoom.com","zoomgov.com"],"linkedin":["linkedin.com","licdn.com"],"intuit":["intuit.com","quickbooks.com","turbotax.com"],"quickbooks":["quickbooks.com","intuit.com"],"netflix":["netflix.com"],"fedex":["fedex.com"],"dhl":["dhl.com","dhl.de"],"usps":["usps.com","usps.gov"],"chase":["chase.com","jpmorganchase.com","jpmorgan.com"],"wellsfargo":["wellsfargo.com","wf.com"],"bankofamerica":["bankofamerica.com","bofa.com"],"coinbase":["coinbase.com"],"salesforce":["salesforce.com","force.com"],"slack":["slack.com"],"zendesk":["zendesk.com"],"ringcentral":["ringcentral.com"],"irs":["irs.gov"]};
+const MULTI=new Set('co.uk org.uk ac.uk gov.uk me.uk com.au net.au org.au co.nz co.jp com.br com.mx co.za co.in com.sg com.cn com.tr com.ar co.kr'.split(' '));
+const registrable=d=>{const p=d.toLowerCase().replace(/\.$/,'').split('.');return p.slice(-(p.length>=3&&MULTI.has(p.slice(-2).join('.'))?3:2)).join('.')};
+const CONF={'а':'a','е':'e','о':'o','р':'p','с':'c','у':'y','х':'x','і':'i','ј':'j','ѕ':'s','ԁ':'d','ӏ':'l','һ':'h','ο':'o','α':'a','ν':'v','τ':'t','ρ':'p','ι':'i','κ':'k','ϲ':'c','0':'o','1':'l','3':'e','4':'a','5':'s','7':'t','8':'b','$':'s','@':'a','|':'l','!':'i','i':'l','-':'','_':''};
+const skeleton=s=>[...s.toLowerCase().replace(/rn/g,'m').replace(/vv/g,'w').replace(/cl/g,'d')].map(ch=>CONF[ch]??ch).join('');
+const editDist=(a,b)=>{let prev=[...Array(b.length+1).keys()];for(let i=1;i<=a.length;i++){const cur=[i];for(let j=1;j<=b.length;j++)cur.push(Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]!==b[j-1])));prev=cur}return prev[b.length]};
+const targets=()=>[...PROTECTED.map(d=>[registrable(d),registrable(d).split('.')[0],'your domain',new Set([registrable(d)])]),
+  ...Object.entries(BRANDS).filter(([k])=>!k.startsWith('_')).map(([b,l])=>[b,b,'brand',new Set(l.map(registrable))])];
+function lookalikeHits(domains){
+  const T=targets(),legit=new Set(T.flatMap(t=>[...t[3]])),hits=[];
+  for(const d of domains){const reg=registrable(d);if(legit.has(reg))continue;
+    const label=reg.split('.')[0],sk=skeleton(label);
+    const tokens=new Set((d.slice(0,d.length-reg.length).replace(/\.$/,'')+'.'+label).split(/[.-]/).filter(Boolean).map(skeleton));
+    for(const [name,tl] of T){const tsk=skeleton(tl);
+      const why=label===tl?'same name on a different domain ending':sk===tsk?'character substitution'
+        :tl.length>=6&&editDist(label,tl)<=(tl.length<9?1:2)?'one or two characters different':tl.length>=3&&tokens.has(tsk)?'name embedded in an unrelated domain':null;
+      if(why){hits.push({domain:d,target:name,why});break}}}
+  return hits;
+}
+function displayNameHits(from){
+  const m=String(from||'').match(/^\s*"?([^"<]*?)"?\s*<([^>]+@([^>]+))>/);if(!m||!m[1].trim())return[];
+  const name=m[1],dom=m[3].toLowerCase(),words=new Set((name.toLowerCase().match(/[\w$@|!]+/g)||[]).map(skeleton)),flat=skeleton(name.replace(/\s+/g,''));
+  const ignore=new Set(BRANDS._display_name_ignore||[]);
+  return targets().filter(([,tl,kind,legit])=>!legit.has(registrable(dom))&&!(kind==='brand'&&ignore.has(tl))&&(words.has(skeleton(tl))||(tl.length>=6&&flat.includes(skeleton(tl)))))
+    .map(([t])=>({target:t,sender:dom}));
+}
+
 function score(c){
   const sig=[];const fd=domainOf(c.from),rd=domainOf(c.replyTo);
   if(rd&&fd&&rd!==fd)sig.push({t:`Reply-To domain differs from From (${fd} → ${rd})`,p:25});
   [['spf',20],['dkim',20],['dmarc',25]].forEach(([m,p])=>{if(c.auth[m]==='fail')sig.push({t:`${m.toUpperCase()} failed`,p})});
   if(c.urls.length)sig.push({t:`${c.urls.length} URL(s) found`,p:Math.min(15,c.urls.length*3),cap:'3 each, max 15'});
   if(c.attachments.length)sig.push({t:`${c.attachments.length} attachment(s) found`,p:Math.min(20,c.attachments.length*8),cap:'8 each, max 20'});
+  const risky={},enc=[];
+  c.attachments.forEach(a=>{const k=riskClass(a.name,a.type);if(k)(risky[k]=risky[k]||[]).push(a.name);if(a.encrypted)enc.push(a.name);
+    (a.members||[]).forEach(m=>{const k=riskClass(m);if(k)(risky[k]=risky[k]||[]).push(`${a.name} → ${m}`)})});
+  Object.entries(ATTACH_RISK).forEach(([k,[,p,l]])=>{if(risky[k])sig.push({t:`${l}: ${risky[k].join(', ')}`,p})});
+  if(enc.length)sig.push({t:`Password-protected archive (contents hidden from scanning): ${enc.join(', ')}`,p:20});
+  const fdom=domainOf(c.from),allDomains=[...new Set(c.urls.map(u=>{try{return new URL(u).hostname.toLowerCase()}catch{return null}}).filter(Boolean).concat(fdom?[fdom]:[]))].sort();
+  const looks=lookalikeHits(allDomains),names=displayNameHits(c.from);
+  if(looks.length)sig.push({t:'Lookalike domain: '+looks.map(h=>`${h.domain} imitates ${h.target} (${h.why})`).join('; '),p:30});
+  if(names.length)sig.push({t:`Sender display name impersonates ${[...new Set(names.map(h=>h.target))].join(', ')} but mail comes from ${names[0].sender}`,p:15});
+  if(c.young&&c.young.length)sig.push({t:`Newly registered domain${c.young.length>1?'s':''} (under 30 days): ${c.young.join(', ')}`,p:20});  // set after enrichment
   const raw=sig.reduce((a,s)=>a+s.p,0),s=Math.min(100,raw);
   const sev=s>=80?'critical':s>=60?'high':s>=30?'medium':'low';
   const mitre=[{id:'T1566',name:'Phishing'}];
   if(c.urls.length)mitre.push({id:'T1566.002',name:'Spearphishing Link'});
   if(c.attachments.length)mitre.push({id:'T1566.001',name:'Spearphishing Attachment'});
   if(c.urls.length||c.attachments.length)mitre.push({id:'T1204',name:'User Execution'});
+  if(risky.html)mitre.push({id:'T1027.006',name:'HTML Smuggling'});
+  if(looks.length)mitre.push({id:'T1583.001',name:'Acquire Infrastructure: Domains'});
+  if(looks.length||names.length)mitre.push({id:'T1656',name:'Impersonation'});
   const domains=[...new Set(c.urls.map(u=>{try{return new URL(u).hostname.toLowerCase()}catch{return null}}).filter(Boolean).concat(fd?[fd]:[]))].sort();
   return Object.assign(c,{signals:sig,raw,risk:s,severity:sev,mitre,domains});
 }
@@ -379,12 +436,13 @@ const CASES=[
   from:'"Document Share" <docs@secure-docs-share.example>',replyTo:'',to:'ap-team@corp.example',
   auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
   urls:['https://secure-docs-share.example/s/9f2KqL','https://secure-docs-share.example/login','https://files.secure-docs-share.example/view/remit_q3','https://cdn.hr-payroll-portal.example/assets/form.js'],
-  ips:['198.51.100.23'],attachments:[{name:'Remittance_Q3.zip',type:'application/zip',size:44120}],notes:[],tags:['credential-harvest']},
+  ips:['198.51.100.23'],attachments:[{name:'Remittance_Q3.zip',type:'application/zip',size:44120,encrypted:true,members:['Remittance_Q3.pdf.lnk']}],notes:[],tags:['credential-harvest']},
  {id:'20261004-19d0f6b3',file:'invoice-inv-20931.eml',received:'2026-10-04T15:40:09Z',status:'contained',
   subject:'Invoice INV-20931 is 14 days overdue',
   from:'"Northwind Accounts" <accounts@northwind-billing.example>',replyTo:'billing@invoice-vault.example.net',to:'m.chen@corp.example',
   auth:{spf:'pass',dkim:'pass',dmarc:'fail'},
   urls:[],ips:['192.0.2.188'],tags:['macro','bec'],attachments:[{name:'INV-20931.xlsm',type:'application/vnd.ms-excel.sheet.macroEnabled.12',size:61204},{name:'INV-20931.pdf',type:'application/pdf',size:120880}],
+  verdict:{value:'malicious',reason:'Macro-enabled workbook from a lookalike billing domain registered 24 days earlier; Reply-To points to a different domain.',set_utc:'2026-10-04T16:05:44Z'},
   notes:[{at:'2026-10-04T16:05:44Z',who:'C. Marrero',t:'Macro-enabled workbook. Sender domain blocked at the gateway; 3 copies purged from mailboxes.'}]},
  {id:'20261004-c51e8a90',file:'mailbox-quota.eml',received:'2026-10-04T11:17:36Z',status:'new',
   subject:'Your mailbox is 98% full. Messages will be held after 24 hours',
@@ -393,7 +451,7 @@ const CASES=[
   urls:['https://corp-sso-verify.example/owa/quota'],ips:[],attachments:[],notes:[]},
  {id:'20261002-4d6c0b71',file:'nda-esignature.eml',received:'2026-10-02T13:55:02Z',status:'contained',
   subject:'E-signature requested: Mutual NDA revision 3',
-  from:'"eSign Review" <sign@esign-review.example>',replyTo:'support@esign-review.example.net',to:'legal@corp.example',
+  from:'"DocuSign eSignature" <sign@esign-review.example>',replyTo:'support@esign-review.example.net',to:'legal@corp.example',
   auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
   urls:['https://esign-review.example/envelope/77ac1','https://esign-review.example/auth'],ips:['203.0.113.47'],attachments:[],notes:[]},
  {id:'20261001-e8a27f55',file:'offsite-agenda.eml',received:'2026-10-01T09:20:13Z',status:'closed',
@@ -401,6 +459,7 @@ const CASES=[
   from:'"Dana Whitfield" <d.whitfield@corp.example>',replyTo:'',to:'eng-all@corp.example',
   auth:{spf:'pass',dkim:'pass',dmarc:'pass'},
   urls:['https://intranet.corp.example/events/offsite-2026'],ips:[],attachments:[],
+  verdict:{value:'benign',reason:'Internal sender, SPF/DKIM/DMARC pass, link points to our intranet. False report.',set_utc:'2026-10-01T09:48:00Z'},
   notes:[{at:'2026-10-01T09:48:00Z',who:'C. Marrero',t:'Benign. Internal sender, authentication passes. Closed as false report.'}]},
 ].map(c=>{c.tags=c.tags||[];c.sha=fakeHash(c.id);c.attachments.forEach(a=>a.sha=fakeHash(c.id+a.name));return score(c)});
 
@@ -428,7 +487,7 @@ function syncHist(){
   CASES.filter(c=>c.uploaded).forEach(c=>{const h=HIST[HIST.length-1];h.extra[c.severity]++});
 }
 
-let state={sel:CASES[0].id,filter:'all',iocTab:'urls',detTab:'sigma',enriched:{},view:'cases',intelFilter:'all',detScope:'open',detPick:{},detTabAll:'sigma'};
+let state={vDraft:{},sel:CASES[0].id,filter:'all',iocTab:'urls',detTab:'sigma',enriched:{},view:'cases',intelFilter:'all',detScope:'open',detPick:{},detTabAll:'sigma'};
 try{const f=localStorage.getItem('ps-filter');if(f)state.filter=f}catch{}
 
 function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,1800)}
@@ -500,7 +559,7 @@ function renderQueue(){
       <span class="stripe" style="background:${SEV[c.severity].c}"></span>
       <span class="sc">${c.risk}</span>
       <span style="min-width:0"><div class="subj">${E(c.subject)}</div>
-      <div class="meta"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${c.id}</span><span class="st ${c.status}">${c.status}</span><span>${fmtTime(c.received)}</span>${c.uploaded?'<span class="st new">uploaded</span>':''}${c.tags.map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
+      <div class="meta"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${c.id}</span><span class="st ${c.status}">${c.status}</span>${vdTag(c.verdict&&c.verdict.value)}<span>${fmtTime(c.received)}</span>${c.uploaded?'<span class="st new">uploaded</span>':''}${c.tags.map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
     </div>`).join(''):`<div class="empty" style="margin:14px">No cases match this filter.</div>`;
   $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>openCase(r.dataset.id);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
 }
@@ -619,7 +678,7 @@ function openReport(c){
   const doc=`<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>PhishScope ${E(c.id)}</title>
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:900px;margin:40px auto;padding:0 16px;color:#17202a;background:#fff;line-height:1.45}h1{border-bottom:3px solid #17202a;padding-bottom:10px}.score{font-size:28px;font-weight:bold}code{word-break:break-all}.m{color:#6c7f92}@media print{button{display:none}}</style>
 <button onclick="print()">Print / Save PDF</button><h1>PhishScope Investigation Report</h1>
-<p><b>Case:</b> ${E(c.id)}<br><b>Subject:</b> ${E(c.subject)}<br><b>From:</b> ${E(c.from)}<br><b>Received:</b> ${E(c.received)}<br><b>Status:</b> ${E(c.status)}<br><b>Tags:</b> ${c.tags.map(E).join(', ')||'none'}<br><b>Evidence SHA-256:</b> <code>${E(c.sha)}</code></p>
+<p><b>Case:</b> ${E(c.id)}<br><b>Subject:</b> ${E(c.subject)}<br><b>From:</b> ${E(c.from)}<br><b>Received:</b> ${E(c.received)}<br><b>Status:</b> ${E(c.status)}<br><b>Verdict:</b> ${c.verdict?`${E(c.verdict.value.toUpperCase())} — ${E(c.verdict.reason)}`:'none recorded'}<br><b>Tags:</b> ${c.tags.map(E).join(', ')||'none'}<br><b>Evidence SHA-256:</b> <code>${E(c.sha)}</code></p>
 <p class=score>Risk ${c.risk}/100 — ${c.severity.toUpperCase()}</p>
 <h2>Findings</h2><ul>${li(c.signals.map(s=>`${E(s.t)} <b>+${s.p}</b>`),'No heuristic findings')}</ul>
 <h2>Indicators</h2><ul>${li([...indicators(c)].sort().map(x=>`<code>${E(x)}</code>`),'None')}</ul>
@@ -666,6 +725,16 @@ function renderCase(){
     </dl>
     <div><button class="btn ghost" id="reportBtn">Open printable report</button></div>
   </div>
+
+  <form class="panel verdict" id="verdictForm">
+    <div class="sec-h"><h2>Analyst verdict</h2><span class="muted" style="font-size:12px">The risk score measures suspicion. The verdict is your conclusion.</span></div>
+    ${c.verdict?`<div class="cur"><div>${vdTag(c.verdict.value)} <span class="muted" style="font-size:12px">set ${fmtTime(c.verdict.set_utc)}</span></div><div>${E(c.verdict.reason)}</div></div>`
+      :'<div class="muted" style="font-size:13px">No verdict yet.</div>'}
+    <div class="seg" id="verdictSeg" role="radiogroup" aria-label="Verdict">${Object.entries(VERDICT).map(([k,[,l]])=>`<button type="button" role="radio" data-v="${k}" aria-pressed="${(state.vDraft.value||c.verdict?.value)===k}" aria-checked="${(state.vDraft.value||c.verdict?.value)===k}">${l}</button>`).join('')}</div>
+    <label for="verdictReason" class="label">Reason</label>
+    <textarea id="verdictReason" maxlength="1000" placeholder="What evidence decided it? e.g. newly registered lookalike domain, credential form, DMARC fail">${E(state.vDraft.reason??'')}</textarea>
+    <div><button class="btn" type="submit">${c.verdict?'Update verdict':'Record verdict'}</button></div>
+  </form>
 
   <div class="grid2">
     <div class="panel sec">
@@ -734,11 +803,20 @@ function renderCase(){
   </div>`;
 
   $('#statusSeg').querySelectorAll('button').forEach(b=>b.onclick=()=>{c.status=b.dataset.s;renderAll();toast(`Status set to ${c.status}`)});
+  $('#verdictSeg').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.vDraft.value=b.dataset.v;
+    $('#verdictSeg').querySelectorAll('button').forEach(o=>{const on=o===b;o.setAttribute('aria-pressed',on);o.setAttribute('aria-checked',on)})});
+  $('#verdictReason').oninput=e=>{state.vDraft.reason=e.target.value};
+  $('#verdictForm').onsubmit=e=>{e.preventDefault();
+    const v=state.vDraft.value||c.verdict?.value,reason=(state.vDraft.reason??'').trim();
+    if(!v){toast('Pick a verdict');return}if(!reason){toast('Add a reason');$('#verdictReason').focus();return}
+    c.verdict={value:v,reason,set_utc:new Date().toISOString()};state.vDraft={};renderQueue();renderCase();toast(`Verdict: ${VERDICT[v][1]}`)};
   document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{state.iocTab=b.dataset.t;renderCase()});
   document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{state.detTab=b.dataset.d;renderCase()});
   document.querySelectorAll('.copy[data-v]').forEach(b=>b.onclick=()=>copy(b.dataset.v,b));
   $('#copyDet').onclick=e=>copy($('#detCode').textContent,$('#detCode'));
-  const eb=$('#enrichBtn');if(eb)eb.onclick=()=>{eb.disabled=true;eb.textContent='Querying RDAP and crt.sh…';setTimeout(()=>{state.enriched[c.id]=true;renderCase();toast('Enrichment complete')},900)};
+  const eb=$('#enrichBtn');if(eb)eb.onclick=()=>{eb.disabled=true;eb.textContent='Querying RDAP and crt.sh…';setTimeout(()=>{state.enriched[c.id]=true;
+    // enrichment can add the newly-registered-domain signal, so rescore
+    c.young=[...new Set(c.domains.map(rootOf))].filter(d=>INTEL[d]&&!INTEL[d].parent&&ageDays(INTEL[d].created)<30).sort();score(c);renderAll();toast('Enrichment complete')},900)};
   $('#noteForm').onsubmit=e=>{e.preventDefault();const t=$('#noteText').value.trim();if(!t)return;c.notes.push({at:new Date().toISOString(),who:'You',t});renderCase();toast('Note added')};
   const tagIn=$('#tagIn');
   tagIn.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const t=tagIn.value.trim().slice(0,40);if(!t)return;
@@ -749,7 +827,7 @@ function renderCase(){
   $('#reportBtn').onclick=()=>openReport(c);
 }
 
-function openCase(id){state.sel=id;state.iocTab='urls';const jump=state.view!=='cases';if(jump){history.pushState(null,'','#cases');setView()}renderQueue();renderCase();if(jump)$('#case').scrollIntoView({block:'start'})}
+function openCase(id){state.sel=id;state.iocTab='urls';state.vDraft={};const jump=state.view!=='cases';if(jump){history.pushState(null,'','#cases');setView()}renderQueue();renderCase();if(jump)$('#case').scrollIntoView({block:'start'})}
 function renderAll(){renderKpis();renderChart();renderQueue();renderCase();renderIntel();renderDetections()}
 
 /* Views: Cases / Intelligence / Detections, routed by URL hash */
@@ -856,8 +934,8 @@ function stixAll(cs,m){
     ...m.ips.map(ip=>ind('PhishScope IP indicator',`[ipv4-addr:value = '${ip}']`,seenIn(c=>c.ips.includes(ip)))),
     ...m.hashes.map(h=>ind('PhishScope attachment indicator',`[file:hashes.'SHA-256' = '${h}']`,seenIn(c=>c.attachments.some(a=>a.sha===h))))]},null,2);
 }
-// closed cases start unticked: they are often false reports whose indicators are legitimate
-const picked=c=>state.detPick[c.id]??c.status!=='closed';
+// closed cases and benign / simulation verdicts start unticked: their indicators are often legitimate
+const picked=c=>state.detPick[c.id]??(c.status!=='closed'&&!['benign','simulation'].includes(c.verdict&&c.verdict.value));
 function renderDetections(){
   const scopes=[['open','Open'],['hot','Critical + high'],['all','All']];
   $('#detScope').innerHTML=scopes.map(([k,l])=>`<button data-ds="${k}" aria-pressed="${state.detScope===k}">${l}</button>`).join('');
@@ -865,7 +943,7 @@ function renderDetections(){
   const inScope=CASES.filter(c=>state.detScope==='all'||(state.detScope==='open'?c.status!=='closed':c.severity==='critical'||c.severity==='high'))
     .sort((a,b)=>b.risk-a.risk);
   $('#detPick').innerHTML=inScope.length?inScope.map(c=>`<label><input type="checkbox" data-pick="${E(c.id)}" ${picked(c)?'checked':''}>
-      <span style="min-width:0"><div class="subj">${E(c.subject)}</div><div class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${E(c.id)}</span> · ${E(c.status)}</div></span>
+      <span style="min-width:0"><div class="subj">${E(c.subject)}</div><div class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${E(c.id)}</span> · ${E(c.status)} ${vdTag(c.verdict&&c.verdict.value)}</div></span>
       <span class="n">${indicators(c).size} IOCs</span></label>`).join(''):'<div class="empty">No cases in this scope.</div>';
   $('#detPick').querySelectorAll('[data-pick]').forEach(b=>b.onchange=()=>{state.detPick[b.dataset.pick]=b.checked;renderDetections()});
   const cs=inScope.filter(picked);
@@ -901,7 +979,8 @@ async function walk(part,out){
   const fn=(cd.match(/filename\*?="?([^";]+)"?/i)||ct.match(/name="?([^";]+)"?/i)||[])[1];
   if(/attachment/i.test(cd)||fn){
     const bytes=enc==='base64'?b64bytes(part.body):new TextEncoder().encode(part.body);
-    out.attachments.push({name:decodeWord(fn||`attachment-${out.attachments.length+1}.bin`).replace(/[^A-Za-z0-9._-]+/g,'_'),type:ct.split(';')[0].trim(),size:bytes.length,sha:await sha256Hex(bytes)});
+    const isZip=bytes[0]===0x50&&bytes[1]===0x4b&&bytes[2]===3&&bytes[3]===4;
+    out.attachments.push({name:decodeWord(fn||`attachment-${out.attachments.length+1}.bin`).replace(/[^A-Za-z0-9._-]+/g,'_'),type:ct.split(';')[0].trim(),size:bytes.length,sha:await sha256Hex(bytes),encrypted:isZip&&!!(bytes[6]&1)});
   }else if(/^text\/(plain|html)/i.test(ct)){
     out.text.push(enc==='base64'?new TextDecoder().decode(b64bytes(part.body)):enc==='quoted-printable'?qp(part.body):part.body);
   }
