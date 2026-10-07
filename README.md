@@ -38,7 +38,7 @@ Fonts load from Google Fonts. Without internet access the page falls back to sys
 
 ### Standalone demo
 
-`demo/dashboard.html` is a self-contained version of the console with fictional sample cases (reserved `.example` domains and documentation IP ranges). Open it directly in a browser; no backend is needed. Uploading an `.eml` there parses and scores it in the browser only, and enrichment results are simulated.
+`demo/dashboard.html` is a self-contained version of the v0.3 console (including correlations, the infrastructure graph, tags and the printable report) with fictional sample cases (reserved `.example` domains and documentation IP ranges). Open it directly in a browser; no backend is needed. Uploading an `.eml` there parses and scores it in the browser only, and enrichment results are simulated.
 
 ## API
 

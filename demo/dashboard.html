@@ -187,6 +187,30 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
 @media (max-width:1040px){.intake{grid-template-columns:1fr}.main{grid-template-columns:1fr}}
 @media (max-width:720px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}nav{display:none}.svc{margin-left:0}.auth{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* tags */
+.tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.tagp{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:2px 4px 2px 9px;font-size:12px;color:var(--ink-2)}
+.tagp button{border:0;background:none;padding:0 4px;color:var(--muted);font-size:13px;line-height:1}
+.tagp button:hover{color:var(--crit)}
+.tags input{font:inherit;font-size:12px;border:1px dashed var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:3px 10px;width:130px}
+.row .tg{font-size:11px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:0 6px}
+
+/* correlations */
+.corr{display:flex;flex-direction:column}
+.corr .c-row{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;padding:9px 0;border-top:1px solid var(--line);cursor:pointer;align-items:start}
+.corr .c-row:first-child{border-top:0}
+.corr .c-row:hover .subj{color:var(--accent)}
+.corr .stripe{align-self:stretch;border-radius:2px}
+.corr .shared{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);overflow-wrap:anywhere;margin-top:3px}
+.corr .cnt{font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* infrastructure graph */
+.graph-box{position:relative}
+.graph-box svg{display:block;width:100%;height:auto;max-height:440px}
+.graph-box line{stroke:var(--line);stroke-width:1.2}
+.graph-box text{font-family:var(--font-mono);font-size:10px;fill:var(--ink-2)}
+.graph-box circle,.graph-box rect{stroke:var(--panel);stroke-width:1.5}
 </style>
 
 </head><body style="margin:0">
@@ -194,7 +218,7 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
   <div class="wrap">
     <div class="brand">
       <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="5" width="24" height="16" rx="3" style="fill:none;stroke:var(--accent)" stroke-width="2"/><path d="M2 7l11 8 11-8" style="fill:none;stroke:var(--accent)" stroke-width="2"/><circle cx="20" cy="19" r="5" style="fill:var(--panel);stroke:var(--ink)" stroke-width="2"/><path d="M23.5 22.5L26 25" style="stroke:var(--ink)" stroke-width="2"/></svg>
-      <b>PhishScope</b><span class="ver">v0.2.0</span>
+      <b>PhishScope</b><span class="ver">v0.3.0</span>
     </div>
     <nav aria-label="Sections"><span class="on">Cases</span><span>Intelligence</span><span>Detections</span></nav>
     <div class="svc" aria-label="Service status">
@@ -266,7 +290,7 @@ function score(c){
   if(c.urls.length)mitre.push({id:'T1566.002',name:'Spearphishing Link'});
   if(c.attachments.length)mitre.push({id:'T1566.001',name:'Spearphishing Attachment'});
   if(c.urls.length||c.attachments.length)mitre.push({id:'T1204',name:'User Execution'});
-  const domains=[...new Set(c.urls.map(u=>{try{return new URL(u).hostname.toLowerCase()}catch{return null}}).filter(Boolean))].sort();
+  const domains=[...new Set(c.urls.map(u=>{try{return new URL(u).hostname.toLowerCase()}catch{return null}}).filter(Boolean).concat(fd?[fd]:[]))].sort();
   return Object.assign(c,{signals:sig,raw,risk:s,severity:sev,mitre,domains});
 }
 
@@ -279,19 +303,19 @@ const CASES=[
   from:'"HR Payroll" <payroll@hr-payroll-portal.example>',replyTo:'payroll-desk@mailbox-relay.example.net',to:'j.alvarez@corp.example',
   auth:{spf:'fail',dkim:'fail',dmarc:'fail'},
   urls:['https://hr-payroll-portal.example/verify?emp=48213','https://cdn.hr-payroll-portal.example/assets/form.js'],
-  ips:['203.0.113.47'],attachments:[{name:'Payroll_Update_Form.html',type:'text/html',size:18432}],
+  ips:['203.0.113.47'],attachments:[{name:'Payroll_Update_Form.html',type:'text/html',size:18432}],tags:['credential-harvest','payroll'],
   notes:[{at:'2026-10-05T08:31:10Z',who:'C. Marrero',t:'Reported by recipient through the report button. Two other recipients in Finance received the same lure.'}]},
  {id:'20261005-7be20d14',file:'q3-vendor-remittance.eml',received:'2026-10-05T07:02:51Z',status:'new',
   subject:'Shared file: Q3 vendor remittance.pdf',
   from:'"Document Share" <docs@secure-docs-share.example>',replyTo:'',to:'ap-team@corp.example',
   auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
-  urls:['https://secure-docs-share.example/s/9f2KqL','https://secure-docs-share.example/login','https://files.secure-docs-share.example/view/remit_q3'],
-  ips:['198.51.100.23'],attachments:[{name:'Remittance_Q3.zip',type:'application/zip',size:44120}],notes:[]},
+  urls:['https://secure-docs-share.example/s/9f2KqL','https://secure-docs-share.example/login','https://files.secure-docs-share.example/view/remit_q3','https://cdn.hr-payroll-portal.example/assets/form.js'],
+  ips:['198.51.100.23'],attachments:[{name:'Remittance_Q3.zip',type:'application/zip',size:44120}],notes:[],tags:['credential-harvest']},
  {id:'20261004-19d0f6b3',file:'invoice-inv-20931.eml',received:'2026-10-04T15:40:09Z',status:'contained',
   subject:'Invoice INV-20931 is 14 days overdue',
   from:'"Northwind Accounts" <accounts@northwind-billing.example>',replyTo:'billing@invoice-vault.example.net',to:'m.chen@corp.example',
   auth:{spf:'pass',dkim:'pass',dmarc:'fail'},
-  urls:[],ips:['192.0.2.188'],attachments:[{name:'INV-20931.xlsm',type:'application/vnd.ms-excel.sheet.macroEnabled.12',size:61204},{name:'INV-20931.pdf',type:'application/pdf',size:120880}],
+  urls:[],ips:['192.0.2.188'],tags:['macro','bec'],attachments:[{name:'INV-20931.xlsm',type:'application/vnd.ms-excel.sheet.macroEnabled.12',size:61204},{name:'INV-20931.pdf',type:'application/pdf',size:120880}],
   notes:[{at:'2026-10-04T16:05:44Z',who:'C. Marrero',t:'Macro-enabled workbook. Sender domain blocked at the gateway; 3 copies purged from mailboxes.'}]},
  {id:'20261004-c51e8a90',file:'mailbox-quota.eml',received:'2026-10-04T11:17:36Z',status:'new',
   subject:'Your mailbox is 98% full. Messages will be held after 24 hours',
@@ -302,14 +326,14 @@ const CASES=[
   subject:'E-signature requested: Mutual NDA revision 3',
   from:'"eSign Review" <sign@esign-review.example>',replyTo:'support@esign-review.example.net',to:'legal@corp.example',
   auth:{spf:'pass',dkim:'fail',dmarc:'fail'},
-  urls:['https://esign-review.example/envelope/77ac1','https://esign-review.example/auth'],ips:['203.0.113.9'],attachments:[],notes:[]},
+  urls:['https://esign-review.example/envelope/77ac1','https://esign-review.example/auth'],ips:['203.0.113.47'],attachments:[],notes:[]},
  {id:'20261001-e8a27f55',file:'offsite-agenda.eml',received:'2026-10-01T09:20:13Z',status:'closed',
   subject:'Team offsite agenda and parking details',
   from:'"Dana Whitfield" <d.whitfield@corp.example>',replyTo:'',to:'eng-all@corp.example',
   auth:{spf:'pass',dkim:'pass',dmarc:'pass'},
   urls:['https://intranet.corp.example/events/offsite-2026'],ips:[],attachments:[],
   notes:[{at:'2026-10-01T09:48:00Z',who:'C. Marrero',t:'Benign. Internal sender, authentication passes. Closed as false report.'}]},
-].map(c=>{c.sha=fakeHash(c.id);c.attachments.forEach(a=>a.sha=fakeHash(c.id+a.name));return score(c)});
+].map(c=>{c.tags=c.tags||[];c.sha=fakeHash(c.id);c.attachments.forEach(a=>a.sha=fakeHash(c.id+a.name));return score(c)});
 
 /* Passive enrichment samples, keyed by domain */
 const INTEL={
@@ -319,6 +343,8 @@ const INTEL={
  'files.secure-docs-share.example':{parent:'secure-docs-share.example'},
  'corp-sso-verify.example':{created:'2026-10-02',registrar:'Registrar Sample Inc.',status:['clientHold'],ns:['ns1.bulletdns.example'],ct:['corp-sso-verify.example','owa.corp-sso-verify.example']},
  'esign-review.example':{created:'2026-08-30',registrar:'Example Registrar, LLC',status:['ok'],ns:['ns1.fastpark-dns.example'],ct:['esign-review.example','www.esign-review.example']},
+ 'northwind-billing.example':{created:'2026-09-12',registrar:'Registrar Sample Inc.',status:['clientHold'],ns:['ns1.bulletdns.example'],ct:['northwind-billing.example','portal.northwind-billing.example']},
+ 'corp.example':{parent:'intranet.corp.example'},
  'intranet.corp.example':{created:'2009-04-14',registrar:'Enterprise Registrar Co.',status:['serverTransferProhibited'],ns:['ns1.corp.example','ns2.corp.example'],ct:['corp.example','intranet.corp.example','mail.corp.example']},
 };
 const TODAY=new Date('2026-10-05T12:00:00Z');
@@ -345,12 +371,12 @@ const sevTag=s=>`<span class="sev"><span aria-hidden="true" style="color:${SEV[s
 function renderKpis(){
   const open=CASES.filter(c=>c.status!=='closed');
   const hot=open.filter(c=>c.severity==='critical'||c.severity==='high').length;
-  const iocs=CASES.reduce((a,c)=>a+c.urls.length+c.domains.length+c.ips.length+c.attachments.length,0);
+  const seen={};CASES.forEach(c=>indicators(c).forEach(i=>seen[i]=(seen[i]||0)+1));const uniq=Object.keys(seen).length,reused=Object.values(seen).filter(n=>n>1).length;
   const fails=CASES.filter(c=>c.auth.dmarc==='fail').length;
   $('#kpis').innerHTML=[
     ['Open cases',open.length,`${CASES.filter(c=>c.status==='new').length} awaiting triage`],
     ['Critical + high',hot,'open, by risk score'],
-    ['Indicators',iocs,'URLs, domains, IPs, hashes'],
+    ['Unique indicators',uniq,`${reused} seen in 2+ cases`],
     ['DMARC failures',`${fails}/${CASES.length}`,'of cases in queue'],
   ].map(([l,v,s])=>`<div class="kpi"><span class="label">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join('');
 }
@@ -405,9 +431,9 @@ function renderQueue(){
       <span class="stripe" style="background:${SEV[c.severity].c}"></span>
       <span class="sc">${c.risk}</span>
       <span style="min-width:0"><div class="subj">${E(c.subject)}</div>
-      <div class="meta"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${c.id}</span><span class="st ${c.status}">${c.status}</span><span>${fmtTime(c.received)}</span>${c.uploaded?'<span class="st new">uploaded</span>':''}</div></span>
+      <div class="meta"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${c.id}</span><span class="st ${c.status}">${c.status}</span><span>${fmtTime(c.received)}</span>${c.uploaded?'<span class="st new">uploaded</span>':''}${c.tags.map(t=>`<span class="tg">${E(t)}</span>`).join('')}</div></span>
     </div>`).join(''):`<div class="empty" style="margin:14px">No cases match this filter.</div>`;
-  $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>{state.sel=r.dataset.id;state.iocTab='urls';renderQueue();renderCase()};r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
+  $('#queue').querySelectorAll('.row').forEach(r=>{const go=()=>openCase(r.dataset.id);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
 }
 
 /* Detection artifacts — formats mirror sigma_for / yara_for / stix_bundle */
@@ -465,6 +491,77 @@ function intelCard(d){
   </div>`;
 }
 
+/* Correlation, graph and report — mirror indicators / correlations / graph_for / report_html */
+const indicators=c=>new Set([...c.domains.map(x=>'domain:'+x),...c.ips.map(x=>'ip:'+x),...c.urls.map(x=>'url:'+x),...c.attachments.map(a=>'sha256:'+a.sha)]);
+function correlations(c){
+  const bi=indicators(c);
+  return CASES.filter(o=>o.id!==c.id).map(o=>{const shared=[...indicators(o)].filter(i=>bi.has(i)).sort();return{o,shared}})
+    .filter(x=>x.shared.length).sort((a,b)=>b.shared.length-a.shared.length);
+}
+function corrList(list){
+  if(!list.length)return '<div class="empty">No other case shares a domain, IP, URL or attachment hash with this one.</div>';
+  return `<div class="corr">${list.map(({o,shared})=>{const sh=shared.map(i=>{const k=i.indexOf(':');return i.slice(0,k)+' '+(i.startsWith('sha256:')?i.slice(k+1):defang(i.slice(k+1)))});
+    return `<div class="c-row" tabindex="0" role="button" data-cid="${E(o.id)}"><span class="stripe" style="background:${SEV[o.severity].c}"></span>
+      <span style="min-width:0"><div class="subj">${E(o.subject)}</div><div class="muted" style="font-size:12px"><span class="mono">${E(o.id)}</span> · ${SEV[o.severity].label} ${o.risk} · ${E(o.status)} · ${fmtTime(o.received)}</div>
+      <div class="shared">${sh.slice(0,6).map(E).join('<br>')}${sh.length>6?`<br>+${sh.length-6} more`:''}</div></span>
+      <span class="cnt">${shared.length} shared</span></div>`}).join('')}</div>`;
+}
+function graphFor(c,enriched){
+  const nodes=[],edges=[],seen=new Set();
+  const node=(id,label,type)=>{if(!seen.has(id)){seen.add(id);nodes.push({id,label,type})}};const edge=(source,target,relation)=>edges.push({source,target,relation});
+  const cid='case:'+c.id;node(cid,c.id,'case');
+  if(c.from){node('sender:'+c.from,c.from,'sender');edge(cid,'sender:'+c.from,'received-from')}
+  c.domains.forEach(d=>{node('domain:'+d,d,'domain');edge(cid,'domain:'+d,'observed')});
+  c.urls.forEach(u=>{node('url:'+u,u,'url');edge(cid,'url:'+u,'contains');let h=null;try{h=new URL(u).hostname.toLowerCase()}catch{}
+    if(h){node('domain:'+h,h,'domain');edge('url:'+u,'domain:'+h,'hosted-on')}});
+  c.ips.forEach(ip=>{node('ip:'+ip,ip,'ip');edge(cid,'ip:'+ip,'observed')});
+  c.attachments.forEach(a=>{node('hash:'+a.sha,a.name,'attachment');edge(cid,'hash:'+a.sha,'attachment')});
+  if(enriched)c.domains.forEach(d=>{const x=INTEL[d];const root=x&&x.parent?INTEL[x.parent]:x;
+    (root?root.ct:[]).forEach(n=>{if(n!==d){node('domain:'+n,n,'related-domain');edge('domain:'+d,'domain:'+n,'certificate-name')}})});
+  return {nodes,edges};
+}
+const GTYPE={case:['var(--ink)','Case'],sender:['var(--serious)','Sender'],domain:['var(--accent)','Domain'],url:['var(--warn)','URL'],ip:['var(--good)','IP'],attachment:['var(--crit)','Attachment'],'related-domain':['var(--muted)','Cert name']};
+function graphSvg(g,enriched){
+  if(g.nodes.length<2)return '<div class="empty">Nothing to graph yet.</div>';
+  const W=640,H=460,cx=W/2,cy=H/2,R1=135,R2=205,pos={};
+  const order=['sender','domain','url','ip','attachment'];
+  const ring1=g.nodes.filter(n=>order.includes(n.type)).sort((a,b)=>order.indexOf(a.type)-order.indexOf(b.type));
+  pos[g.nodes[0].id]=[cx,cy];
+  ring1.forEach((n,i)=>{const a=-Math.PI/2+i*2*Math.PI/ring1.length;pos[n.id]=[cx+R1*Math.cos(a),cy+R1*Math.sin(a),a]});
+  const kids={};g.edges.filter(e=>e.relation==='certificate-name').forEach(e=>{if(!pos[e.target])(kids[e.source]=kids[e.source]||[]).push(e.target)});
+  const step=ring1.length?2*Math.PI/ring1.length:2*Math.PI;
+  Object.entries(kids).forEach(([p,ks])=>{const a0=(pos[p]||[0,0,0])[2]||0;const spread=Math.min(step*.8,ks.length*.06);
+    ks.forEach((k,i)=>{if(pos[k])return;const a=a0-spread/2+(ks.length>1?i*spread/(ks.length-1):0);pos[k]=[cx+R2*Math.cos(a),cy+R2*Math.sin(a),a]})});
+  const short=s=>{s=String(s);return s.length>26?s.slice(0,24)+'…':s};
+  let lines='',dots='',labels='';
+  g.edges.forEach(e=>{const a=pos[e.source],b=pos[e.target];if(a&&b)lines+=`<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"><title>${E(e.relation)}</title></line>`});
+  g.nodes.forEach(n=>{const p=pos[n.id];if(!p)return;const col=GTYPE[n.type][0];const raw=n.type==='attachment'||n.type==='case'||n.type==='sender'?n.label:defang(n.label);
+    const r=n.type==='case'?11:n.type==='related-domain'?3.5:6;
+    dots+=n.type==='case'?`<rect x="${p[0]-r}" y="${p[1]-r}" width="${2*r}" height="${2*r}" rx="3" style="fill:${col}"><title>Case ${E(n.label)}</title></rect>`
+                         :`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${r}" style="fill:${col}"><title>${GTYPE[n.type][1]}: ${E(raw)}</title></circle>`;
+    if(n.type!=='related-domain'&&n.type!=='case'){const right=Math.cos(p[2])>=0;labels+=`<text x="${(p[0]+(right?9:-9)).toFixed(1)}" y="${(p[1]+3).toFixed(1)}" text-anchor="${right?'start':'end'}">${E(short(raw))}</text>`}});
+  const types=[...new Set(g.nodes.map(n=>n.type))];const ring2=g.nodes.filter(n=>n.type==='related-domain').length;
+  return `<div class="legend">${types.map(t=>`<span><span class="sw" style="background:${GTYPE[t][0]};border-radius:50%"></span>${GTYPE[t][1]} <span class="muted mono">${g.nodes.filter(n=>n.type===t).length}</span></span>`).join('')}</div>
+    <div class="graph-box"><svg viewBox="-60 0 ${W+120} ${H}" role="img" aria-label="Infrastructure graph: ${g.nodes.length} nodes, ${g.edges.length} relationships">${lines}${dots}${labels}</svg></div>
+    <div class="muted" style="font-size:12px">${ring2?`${ring2} certificate name${ring2>1?'s':''} from crt.sh shown as small outer dots. Hover any node for its full value.`:enriched?'No extra certificate names found.':'Run passive enrichment to add certificate-transparency names to the graph.'}</div>`;
+}
+function openReport(c){
+  const li=(items,empty)=>items.map(x=>`<li>${x}</li>`).join('')||`<li class=m>${empty}</li>`;
+  const doc=`<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>PhishScope ${E(c.id)}</title>
+<style>body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:900px;margin:40px auto;padding:0 16px;color:#17202a;background:#fff;line-height:1.45}h1{border-bottom:3px solid #17202a;padding-bottom:10px}.score{font-size:28px;font-weight:bold}code{word-break:break-all}.m{color:#6c7f92}@media print{button{display:none}}</style>
+<button onclick="print()">Print / Save PDF</button><h1>PhishScope Investigation Report</h1>
+<p><b>Case:</b> ${E(c.id)}<br><b>Subject:</b> ${E(c.subject)}<br><b>From:</b> ${E(c.from)}<br><b>Received:</b> ${E(c.received)}<br><b>Status:</b> ${E(c.status)}<br><b>Tags:</b> ${c.tags.map(E).join(', ')||'none'}<br><b>Evidence SHA-256:</b> <code>${E(c.sha)}</code></p>
+<p class=score>Risk ${c.risk}/100 — ${c.severity.toUpperCase()}</p>
+<h2>Findings</h2><ul>${li(c.signals.map(s=>`${E(s.t)} <b>+${s.p}</b>`),'No heuristic findings')}</ul>
+<h2>Indicators</h2><ul>${li([...indicators(c)].sort().map(x=>`<code>${E(x)}</code>`),'None')}</ul>
+<h2>MITRE ATT&amp;CK</h2><ul>${li(c.mitre.map(m=>`${E(m.id)} — ${E(m.name)}`),'None')}</ul>
+<h2>Cross-case correlation</h2><ul>${li(correlations(c).map(({o,shared})=>`${E(o.id)} (${o.severity}) — ${shared.length} shared IOC(s)`),'No correlated cases')}</ul>
+<h2>Analyst notes</h2><ul>${li(c.notes.map(n=>`${E(n.at)} · ${E(n.who)}: ${E(n.t)}`),'None')}</ul>
+<hr><small>Generated by the PhishScope v0.3 demo from fictional sample data. Defensive research only.</small></html>`;
+  const w=window.open(URL.createObjectURL(new Blob([doc],{type:'text/html'})),'_blank');
+  if(!w)toast('Allow pop-ups to open the report');
+}
+
 /* Case workbench */
 function renderCase(){
   const c=CASES.find(x=>x.id===state.sel);if(!c){$('#case').innerHTML='';return}
@@ -479,7 +576,7 @@ function renderCase(){
   const tabs=[['urls','URLs'],['domains','Domains'],['ips','IPs'],['files','Attachments']];
   const rows=iocRows[state.iocTab];
   const enr=state.enriched[c.id];
-  const det={sigma:sigma(c),yara:yara(c),stix:stix(c)};
+  const det={sigma:sigma(c),yara:yara(c),stix:stix(c)};const graph=graphFor(c,enr);
   $('#case').innerHTML=`
   <div class="panel case-head">
     <div class="case-title">
@@ -496,7 +593,9 @@ function renderCase(){
       <dt>Received</dt><dd>${fmtTime(c.received)} · reported to <span class="mono">${E(c.to)}</span></dd>
       <dt>Evidence</dt><dd><span class="mono">cases/${c.id}/original.eml</span> · ${E(c.file)}</dd>
       <dt>SHA-256</dt><dd class="mono">${c.sha}</dd>
+      <dt>Tags</dt><dd><div class="tags" id="tagBox">${c.tags.map(t=>`<span class="tagp">${E(t)}<button data-tag="${E(t)}" aria-label="Remove tag ${E(t)}">×</button></span>`).join('')}<input id="tagIn" maxlength="40" placeholder="Add tag, press Enter" aria-label="Add tag"></div></dd>
     </dl>
+    <div><button class="btn ghost" id="reportBtn">Open printable report</button></div>
   </div>
 
   <div class="grid2">
@@ -533,10 +632,20 @@ function renderCase(){
   <div class="panel sec">
     <div class="sec-h"><h2>Passive enrichment</h2>
       <button class="btn${enr?' ghost':''}" id="enrichBtn" ${c.domains.length?'':'disabled'}>${enr?'Re-run enrichment':'Run passive enrichment'}</button></div>
-    ${!c.domains.length?`<div class="empty">No domains to enrich. This message carries no URLs.</div>`:
-      enr?`<div class="intel">${c.domains.map(intelCard).join('')}</div>
+    ${!c.domains.length?`<div class="empty">No domains to enrich. This message has no sender domain or URLs.</div>`:
+      enr?`<div class="intel">${[...new Set(c.domains.map(d=>INTEL[d]&&INTEL[d].parent||d))].map(intelCard).join('')}</div>
         <div class="muted" style="font-size:12px">VirusTotal reputation skipped: <span class="mono">VIRUSTOTAL_API_KEY</span> not configured.</div>`
       :`<div class="empty">Queries RDAP for registration data and crt.sh for certificate transparency names on ${c.domains.length} domain${c.domains.length>1?'s':''}. No traffic is sent to the suspect infrastructure.</div>`}
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Correlated cases</h2><span class="muted" style="font-size:12px">Other cases sharing a domain, IP, URL or attachment hash</span></div>
+    ${corrList(correlations(c))}
+  </div>
+
+  <div class="panel sec">
+    <div class="sec-h"><h2>Infrastructure graph</h2><span class="muted" style="font-size:12px">${graph.nodes.length} nodes · ${graph.edges.length} relationships</span></div>
+    ${graphSvg(graph,!!enr)}
   </div>
 
   <div class="panel sec">
@@ -562,8 +671,16 @@ function renderCase(){
   $('#copyDet').onclick=e=>copy($('#detCode').textContent,$('#detCode'));
   const eb=$('#enrichBtn');if(eb)eb.onclick=()=>{eb.disabled=true;eb.textContent='Querying RDAP and crt.sh…';setTimeout(()=>{state.enriched[c.id]=true;renderCase();toast('Enrichment complete')},900)};
   $('#noteForm').onsubmit=e=>{e.preventDefault();const t=$('#noteText').value.trim();if(!t)return;c.notes.push({at:new Date().toISOString(),who:'You',t});renderCase();toast('Note added')};
+  const tagIn=$('#tagIn');
+  tagIn.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const t=tagIn.value.trim().slice(0,40);if(!t)return;
+    if(c.tags.length>=20){toast('20 tags max');return}
+    c.tags=[...new Set([...c.tags,t])].sort();renderQueue();renderCase();$('#tagIn').focus()};
+  $('#tagBox').querySelectorAll('[data-tag]').forEach(b=>b.onclick=()=>{c.tags=c.tags.filter(t=>t!==b.dataset.tag);renderQueue();renderCase()});
+  document.querySelectorAll('.c-row').forEach(r=>{const go=()=>openCase(r.dataset.cid);r.onclick=go;r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}});
+  $('#reportBtn').onclick=()=>openReport(c);
 }
 
+function openCase(id){state.sel=id;state.iocTab='urls';renderQueue();renderCase()}
 function renderAll(){renderKpis();renderChart();renderQueue();renderCase()}
 
 /* In-browser .eml parsing (demo stand-in for POST /api/analyze) */
@@ -602,7 +719,7 @@ async function analyzeFile(f){
   const now=new Date();const id=now.toISOString().slice(0,10).replace(/-/g,'')+'-'+hex(4);
   const c=score({id,file:f.name.replace(/[^A-Za-z0-9._-]+/g,'_'),received:now.toISOString(),status:'new',uploaded:true,
     subject:decodeWord(msg.hdrs['subject'])||'(no subject)',from:decodeWord(msg.hdrs['from']||''),replyTo:decodeWord(msg.hdrs['reply-to']||''),to:decodeWord(msg.hdrs['to']||'unknown'),
-    auth:{spf:res('spf'),dkim:res('dkim'),dmarc:res('dmarc')},urls,ips,attachments:out.attachments,notes:[],sha:await sha256Hex(buf)});
+    auth:{spf:res('spf'),dkim:res('dkim'),dmarc:res('dmarc')},urls,ips,attachments:out.attachments,notes:[],tags:[],sha:await sha256Hex(buf)});
   CASES.unshift(c);state.sel=c.id;state.filter='all';state.iocTab='urls';renderAll();toast(`Case ${c.id} opened`);
   $('#case').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
 }
