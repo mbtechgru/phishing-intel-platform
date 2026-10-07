@@ -41,8 +41,9 @@ button:focus-visible,select:focus-visible,textarea:focus-visible,.row:focus-visi
 .brand b{font-size:17px;letter-spacing:-.01em}
 .brand .ver{font-family:var(--font-mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
 nav{display:flex;gap:4px}
-nav span{padding:6px 10px;border-radius:6px;color:var(--ink-2);font-weight:500}
-nav span.on{background:var(--accent-soft);color:var(--ink)}
+nav a{padding:6px 10px;border-radius:6px;color:var(--ink-2);font-weight:500;text-decoration:none}
+nav a:hover{color:var(--ink)}
+nav a[aria-current="page"]{background:var(--accent-soft);color:var(--ink)}
 .svc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
 .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-size:12px;color:var(--ink-2);background:var(--panel)}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
@@ -186,7 +187,7 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
 .foot{margin-top:24px;font-size:12px;color:var(--muted);max-width:80ch}
 
 @media (max-width:1040px){.intake{grid-template-columns:1fr}.main{grid-template-columns:1fr}}
-@media (max-width:720px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}nav{display:none}.svc{margin-left:0}.auth{grid-template-columns:1fr}}
+@media (max-width:720px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}nav{order:3;width:100%}.svc{margin-left:0}.auth{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* tags */
@@ -212,6 +213,31 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
 .graph-box line{stroke:var(--line);stroke-width:1.2}
 .graph-box text{font-family:var(--font-mono);font-size:10px;fill:var(--ink-2)}
 .graph-box circle,.graph-box rect{stroke:var(--panel);stroke-width:1.5}
+
+/* intelligence + detections views */
+.view-head{margin-top:18px;display:flex;flex-direction:column;gap:4px}
+.view-head h1{font-size:20px;font-weight:600}
+.view-head p{margin:0;color:var(--muted);max-width:80ch}
+.view-body{display:flex;flex-direction:column;gap:16px;margin-top:16px}
+.cids{display:flex;gap:4px;flex-wrap:wrap}
+.cid{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--panel);border-radius:5px;padding:1px 6px;font-family:var(--font-mono);font-size:11px;color:var(--ink-2);white-space:nowrap}
+.cid:hover{border-color:var(--accent);color:var(--accent)}
+.young{color:var(--crit);font-weight:600}
+table.ioc td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.pivot{display:flex;flex-direction:column}
+.pivot>div{padding:9px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:4px;min-width:0}
+.pivot>div:first-child{border-top:0}
+.pivot .k{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.pivot .k .mono{overflow-wrap:anywhere}
+.det-grid{display:grid;grid-template-columns:minmax(280px,380px) minmax(0,1fr);gap:16px;align-items:start}
+.pick{display:flex;flex-direction:column}
+.pick label{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 0;border-top:1px solid var(--line);cursor:pointer}
+.pick label:first-child{border-top:0}
+.pick input{margin-top:3px;accent-color:var(--accent)}
+.pick .subj{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick .n{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.det-sum{font-size:12.5px;color:var(--ink-2)}
+@media (max-width:1040px){.det-grid{grid-template-columns:1fr}}
 </style>
 
 </head><body style="margin:0">
@@ -221,7 +247,7 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
       <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="5" width="24" height="16" rx="3" style="fill:none;stroke:var(--accent)" stroke-width="2"/><path d="M2 7l11 8 11-8" style="fill:none;stroke:var(--accent)" stroke-width="2"/><circle cx="20" cy="19" r="5" style="fill:var(--panel);stroke:var(--ink)" stroke-width="2"/><path d="M23.5 22.5L26 25" style="stroke:var(--ink)" stroke-width="2"/></svg>
       <b>PhishScope</b><span class="ver">v0.3.0</span>
     </div>
-    <nav aria-label="Sections"><span class="on">Cases</span><span>Intelligence</span><span>Detections</span></nav>
+    <nav aria-label="Sections"><a href="#cases" data-view="cases">Cases</a><a href="#intelligence" data-view="intelligence">Intelligence</a><a href="#detections" data-view="detections">Detections</a></nav>
     <div class="svc" aria-label="Service status">
       <span class="chip"><span class="dot" style="background:var(--good)"></span>RDAP</span>
       <span class="chip"><span class="dot" style="background:var(--good)"></span>crt.sh</span>
@@ -232,6 +258,7 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
 </header>
 
 <main class="wrap">
+<div id="view-cases" data-view-pane="cases">
   <section class="intake">
     <div class="left-stack">
       <label class="drop" id="drop" for="file">
@@ -262,6 +289,47 @@ textarea{width:100%;min-height:72px;resize:vertical;background:var(--panel-2);co
     </aside>
     <section class="case" id="case" aria-live="polite"></section>
   </section>
+</div>
+
+<div id="view-intelligence" data-view-pane="intelligence" hidden>
+  <div class="view-head"><h1>Intelligence</h1>
+    <p>Passive enrichment across every case: domain registration age (RDAP), certificate transparency names (crt.sh), infrastructure shared between domains, and indicators that recur across cases.</p></div>
+  <div class="view-body">
+    <div class="kpis" id="intelKpis"></div>
+    <div class="panel sec">
+      <div class="sec-h"><h2>Domains</h2><div class="filters" id="intelFilters"></div></div>
+      <div class="scroll" id="intelTable"></div>
+    </div>
+    <div class="grid2">
+      <div class="panel sec">
+        <div class="sec-h"><h2>Shared infrastructure</h2><span class="muted" style="font-size:12px">Name servers and registrars behind 2+ domains</span></div>
+        <div id="intelInfra"></div>
+      </div>
+      <div class="panel sec">
+        <div class="sec-h"><h2>Recurring indicators</h2><span class="muted" style="font-size:12px">Seen in 2+ cases</span></div>
+        <div id="intelRecur"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="view-detections" data-view-pane="detections" hidden>
+  <div class="view-head"><h1>Detections</h1>
+    <p>Combine indicators from several cases into one Sigma rule, YARA rule or STIX 2.1 bundle, ready to load into a SIEM, scanner or threat-intel platform. Duplicates across cases are merged.</p></div>
+  <div class="view-body det-grid">
+    <div class="panel sec">
+      <div class="sec-h"><h2>Cases in scope</h2><div class="filters" id="detScope"></div></div>
+      <div class="pick" id="detPick"></div>
+    </div>
+    <div class="panel sec">
+      <div class="sec-h"><h2>Combined detection content</h2>
+        <div style="display:flex;gap:6px"><button class="copy" id="copyAll">Copy</button><button class="copy" id="dlAll">Download</button></div></div>
+      <div class="det-sum" id="detSum"></div>
+      <div class="tabs" role="tablist" id="detTabsAll"></div>
+      <div id="detOut"></div>
+    </div>
+  </div>
+</div>
 
   <p class="foot">PhishScope performs local evidence analysis and passive intelligence collection only. It does not scan, exploit or credential-test third-party infrastructure. All cases, domains and addresses on this page are fictional samples using reserved <span class="mono">.example</span> domains and documentation IP ranges. Generated Sigma and YARA rules are starting points to review and tune before deployment.</p>
 </main>
@@ -360,7 +428,7 @@ function syncHist(){
   CASES.filter(c=>c.uploaded).forEach(c=>{const h=HIST[HIST.length-1];h.extra[c.severity]++});
 }
 
-let state={sel:CASES[0].id,filter:'all',iocTab:'urls',detTab:'sigma',enriched:{}};
+let state={sel:CASES[0].id,filter:'all',iocTab:'urls',detTab:'sigma',enriched:{},view:'cases',intelFilter:'all',detScope:'open',detPick:{},detTabAll:'sigma'};
 try{const f=localStorage.getItem('ps-filter');if(f)state.filter=f}catch{}
 
 function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,1800)}
@@ -681,8 +749,140 @@ function renderCase(){
   $('#reportBtn').onclick=()=>openReport(c);
 }
 
-function openCase(id){state.sel=id;state.iocTab='urls';renderQueue();renderCase()}
-function renderAll(){renderKpis();renderChart();renderQueue();renderCase()}
+function openCase(id){state.sel=id;state.iocTab='urls';const jump=state.view!=='cases';if(jump){history.pushState(null,'','#cases');setView()}renderQueue();renderCase();if(jump)$('#case').scrollIntoView({block:'start'})}
+function renderAll(){renderKpis();renderChart();renderQueue();renderCase();renderIntel();renderDetections()}
+
+/* Views: Cases / Intelligence / Detections, routed by URL hash */
+function setView(){
+  const v=({intelligence:'intelligence',detections:'detections'})[location.hash.slice(1)]||'cases';state.view=v;
+  document.querySelectorAll('[data-view-pane]').forEach(p=>p.hidden=p.dataset.viewPane!==v);
+  document.querySelectorAll('nav a').forEach(a=>a.dataset.view===v?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current'));
+  if(v==='intelligence')renderIntel();if(v==='detections')renderDetections();
+}
+addEventListener('hashchange',()=>{setView();scrollTo(0,0)});
+const rootOf=d=>INTEL[d]&&INTEL[d].parent||d;
+const cidBtn=c=>`<button class="cid" data-open="${E(c.id)}" title="${E(c.subject)}"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span>${E(c.id)}</button>`;
+const worst=list=>SEV_ORDER.find(k=>list.some(c=>c.severity===k));
+function bindCids(root){root.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openCase(b.dataset.open))}
+
+/* Intelligence: cross-case view of the passive enrichment cache */
+function renderIntel(){
+  const byRoot={};
+  CASES.forEach(c=>c.domains.forEach(d=>{const r=rootOf(d);(byRoot[r]=byRoot[r]||{names:new Set(),cases:new Set()}).names.add(d);byRoot[r].cases.add(c)}));
+  const rows=Object.entries(byRoot).map(([d,v])=>{const x=INTEL[d];const cases=[...v.cases];
+    return{d,x,cases,age:x?ageDays(x.created):null,open:cases.some(c=>c.status!=='closed')}})
+    .sort((a,b)=>(a.age??1e9)-(b.age??1e9)||a.d.localeCompare(b.d));
+  const young=rows.filter(r=>r.age!==null&&r.age<30);
+  const pivot=key=>{const m={};rows.forEach(r=>r.x&&[].concat(r.x[key]).forEach(v=>(m[v]=m[v]||[]).push(r)));return Object.entries(m).filter(([,rs])=>rs.length>1).sort((a,b)=>b[1].length-a[1].length)};
+  const ns=pivot('ns'),reg=pivot('registrar');
+  const seen={};CASES.forEach(c=>indicators(c).forEach(i=>(seen[i]=seen[i]||[]).push(c)));
+  const recur=Object.entries(seen).filter(([,cs])=>cs.length>1).sort((a,b)=>b[1].length-a[1].length||a[0].localeCompare(b[0]));
+  $('#intelKpis').innerHTML=[
+    ['Domains tracked',rows.length,`${rows.filter(r=>r.x).length} with RDAP data`],
+    ['Newly registered',young.length,'under 30 days old'],
+    ['Shared name servers',ns.length,'used by 2+ domains'],
+    ['Recurring indicators',recur.length,'seen in 2+ cases'],
+  ].map(([l,v,s])=>`<div class="kpi"><span class="label">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join('');
+  const fopts=[['all','All'],['young','Newly registered'],['open','In open cases']];
+  $('#intelFilters').innerHTML=fopts.map(([k,l])=>`<button data-if="${k}" aria-pressed="${state.intelFilter===k}">${l}</button>`).join('');
+  $('#intelFilters').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.intelFilter=b.dataset.if;renderIntel()});
+  const shown=rows.filter(r=>state.intelFilter==='all'||(state.intelFilter==='young'?r.age!==null&&r.age<30:r.open));
+  $('#intelTable').innerHTML=shown.length?`<table class="ioc"><thead><tr><th>Domain</th><th>Age</th><th>Registrar</th><th>Name servers</th><th>CT names</th><th>Cases</th></tr></thead><tbody>${shown.map(r=>`<tr>
+      <td class="mono">${E(defang(r.d))}</td>
+      ${r.x?`<td class="num">${r.age<30?`<span class="young"><span aria-hidden="true">▲</span> ${r.age} d</span>`:`${r.age} d`}<div class="muted" style="font-size:11px">${r.x.created}</div></td>
+      <td>${E(r.x.registrar)}<div class="muted" style="font-size:11px">${r.x.status.map(E).join(', ')}</div></td>
+      <td class="mono" style="font-size:11.5px">${r.x.ns.map(n=>E(defang(n))).join('<br>')}</td>
+      <td class="num" title="${E(r.x.ct.join('\n'))}">${r.x.ct.length}</td>`
+      :`<td colspan="4" class="muted">No RDAP record returned. Domain may be unregistered or rate-limited.</td>`}
+      <td><div class="cids">${r.cases.map(cidBtn).join('')}</div></td></tr>`).join('')}</tbody></table>`
+    :`<div class="empty">No domains match this filter.</div>`;
+  const infra=[...ns.map(([k,rs])=>['Name server',k,rs]),...reg.map(([k,rs])=>['Registrar',k,rs])];
+  $('#intelInfra').innerHTML=infra.length?`<div class="pivot">${infra.map(([t,k,rs])=>{const cs=[...new Set(rs.flatMap(r=>r.cases))];
+      return `<div><div class="k"><span><span class="label">${t}</span> <span class="${t==='Name server'?'mono':''}">${E(t==='Name server'?defang(k):k)}</span></span><span class="n mono muted">${rs.length} domains</span></div>
+      <div class="mono muted" style="font-size:11.5px">${rs.map(r=>E(defang(r.d))).join(', ')}</div><div class="cids">${cs.map(cidBtn).join('')}</div></div>`}).join('')}</div>`
+    :'<div class="empty">No name server or registrar is shared between enriched domains.</div>';
+  $('#intelRecur').innerHTML=recur.length?`<div class="pivot">${recur.map(([i,cs])=>{const k=i.indexOf(':'),t=i.slice(0,k),v=i.slice(k+1);
+      return `<div><div class="k"><span style="min-width:0"><span class="label">${E(t)}</span> <span class="mono">${E(t==='sha256'?v:defang(v))}</span></span><span class="mono muted">${cs.length} cases</span></div><div class="cids">${cs.map(cidBtn).join('')}</div></div>`}).join('')}</div>`
+    :'<div class="empty">No indicator appears in more than one case.</div>';
+  bindCids($('#view-intelligence'));
+}
+
+/* Detections: merged Sigma / YARA / STIX across selected cases */
+const addrOf=v=>{const m=String(v||'').match(/<?([^<>\s"]+@[^<>\s"]+)>?\s*$/);return m?m[1].toLowerCase():''};
+const stableUuid=s=>{const h=fakeHash(s);return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`};
+const uniq=a=>[...new Set(a)].sort();
+function mergedIocs(cs){return{senders:uniq(cs.map(c=>addrOf(c.from)).filter(Boolean)),domains:uniq(cs.flatMap(c=>c.domains)),ips:uniq(cs.flatMap(c=>c.ips)),
+  hashes:uniq(cs.flatMap(c=>c.attachments.map(a=>a.sha))),mitre:uniq(cs.flatMap(c=>c.mitre.map(m=>m.id)))}}
+function sigmaAll(cs,m){
+  const sel=[];
+  if(m.senders.length)sel.push(['sender',`    sender|contains:\n${m.senders.map(v=>'      - '+JSON.stringify(v)).join('\n')}`]);
+  if(m.domains.length)sel.push(['url',`    url_domain|contains:\n${m.domains.map(v=>'      - '+JSON.stringify(v)).join('\n')}`]);
+  return `title: PhishScope combined indicators (${cs.length} case${cs.length>1?'s':''})
+id: ${stableUuid(cs.map(c=>c.id).join(','))}
+status: experimental
+description: Indicators merged from authorized defensive phishing investigations ${cs.map(c=>c.id).join(', ')}
+date: ${new Date().toISOString().slice(0,10).replace(/-/g,'/')}
+tags:
+${['attack.initial_access',...m.mitre.map(t=>'attack.'+t.toLowerCase())].map(t=>'  - '+t).join('\n')}
+logsource:
+  category: email
+detection:
+${sel.map(([k,v])=>`  ${k}:\n${v}`).join('\n')}
+  condition: ${sel.map(s=>s[0]).join(' or ')}
+falsepositives:
+  - Legitimate messages sharing infrastructure
+level: ${worst(cs)}`;
+}
+function yaraAll(cs,m){
+  const s=m.domains.map((d,i)=>`    $domain${i} = "${d}" ascii wide nocase`).concat(m.senders.map((d,i)=>`    $sender${i} = "${d}" ascii wide nocase`),m.hashes.map((h,i)=>`    $hash${i} = "${h}" ascii`));
+  return `rule PhishScope_Combined_${new Date().toISOString().slice(0,10).replace(/-/g,'')} {
+  meta:
+    description = "Indicators merged from ${cs.length} defensive PhishScope case${cs.length>1?'s':''}"
+    cases = "${cs.map(c=>c.id).join(', ')}"
+    severity = "${worst(cs)}"
+  strings:
+${s.join('\n')}
+  condition:
+    any of them
+}`;
+}
+function stixAll(cs,m){
+  const now=new Date().toISOString().replace(/\.\d+Z$/,'Z');
+  const seenIn=pred=>cs.filter(pred).map(c=>c.id).join(', ');
+  const ind=(name,pattern,cases)=>({type:'indicator',spec_version:'2.1',id:'indicator--'+stableUuid(pattern),created:now,modified:now,name,description:'Seen in PhishScope cases: '+cases,
+    indicator_types:['malicious-activity'],pattern_type:'stix',pattern,valid_from:now});
+  return JSON.stringify({type:'bundle',id:'bundle--'+stableUuid(cs.map(c=>c.id).join(',')),objects:[
+    ...m.domains.map(d=>ind('PhishScope domain indicator',`[domain-name:value = '${d}']`,seenIn(c=>c.domains.includes(d)))),
+    ...m.ips.map(ip=>ind('PhishScope IP indicator',`[ipv4-addr:value = '${ip}']`,seenIn(c=>c.ips.includes(ip)))),
+    ...m.hashes.map(h=>ind('PhishScope attachment indicator',`[file:hashes.'SHA-256' = '${h}']`,seenIn(c=>c.attachments.some(a=>a.sha===h))))]},null,2);
+}
+// closed cases start unticked: they are often false reports whose indicators are legitimate
+const picked=c=>state.detPick[c.id]??c.status!=='closed';
+function renderDetections(){
+  const scopes=[['open','Open'],['hot','Critical + high'],['all','All']];
+  $('#detScope').innerHTML=scopes.map(([k,l])=>`<button data-ds="${k}" aria-pressed="${state.detScope===k}">${l}</button>`).join('');
+  $('#detScope').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.detScope=b.dataset.ds;renderDetections()});
+  const inScope=CASES.filter(c=>state.detScope==='all'||(state.detScope==='open'?c.status!=='closed':c.severity==='critical'||c.severity==='high'))
+    .sort((a,b)=>b.risk-a.risk);
+  $('#detPick').innerHTML=inScope.length?inScope.map(c=>`<label><input type="checkbox" data-pick="${E(c.id)}" ${picked(c)?'checked':''}>
+      <span style="min-width:0"><div class="subj">${E(c.subject)}</div><div class="muted" style="font-size:12px;display:flex;gap:6px;align-items:center"><span aria-hidden="true" style="color:${SEV[c.severity].c}">${SEV[c.severity].icon}</span><span class="mono">${E(c.id)}</span> · ${E(c.status)}</div></span>
+      <span class="n">${indicators(c).size} IOCs</span></label>`).join(''):'<div class="empty">No cases in this scope.</div>';
+  $('#detPick').querySelectorAll('[data-pick]').forEach(b=>b.onchange=()=>{state.detPick[b.dataset.pick]=b.checked;renderDetections()});
+  const cs=inScope.filter(picked);
+  const tabs=[['sigma','Sigma rule'],['yara','YARA rule'],['stix','STIX 2.1 bundle']];
+  $('#detTabsAll').innerHTML=tabs.map(([k,l])=>`<button role="tab" data-da="${k}" aria-selected="${state.detTabAll===k}">${l}</button>`).join('');
+  $('#detTabsAll').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.detTabAll=b.dataset.da;renderDetections()});
+  const btns=[$('#copyAll'),$('#dlAll')];
+  if(!cs.length){$('#detSum').textContent='';$('#detOut').innerHTML='<div class="empty">Select at least one case to generate combined rules.</div>';btns.forEach(b=>b.disabled=true);return}
+  const m=mergedIocs(cs);
+  $('#detSum').innerHTML=`${cs.length} case${cs.length>1?'s':''} · ${m.senders.length} senders · ${m.domains.length} domains · ${m.ips.length} IPs · ${m.hashes.length} attachment hashes · highest severity ${sevTag(worst(cs))}`;
+  const text={sigma:sigmaAll,yara:yaraAll,stix:stixAll}[state.detTabAll](cs,m);
+  $('#detOut').innerHTML=`<pre class="code" style="max-height:560px">${E(text)}</pre>`;
+  btns.forEach(b=>b.disabled=false);
+  $('#copyAll').onclick=()=>copy(text,$('#detOut pre'));
+  $('#dlAll').onclick=()=>{const ext={sigma:'yml',yara:'yar',stix:'json'}[state.detTabAll];const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.download=`phishscope-combined.${ext}`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast(`Downloaded phishscope-combined.${ext}`)};
+}
 
 /* In-browser .eml parsing (demo stand-in for POST /api/analyze) */
 async function sha256Hex(buf){const h=await crypto.subtle.digest('SHA-256',buf);return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')}
@@ -730,7 +930,7 @@ fi.addEventListener('change',()=>{if(fi.files[0])analyzeFile(fi.files[0]).catch(
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)analyzeFile(f).catch(()=>toast('Could not parse that file as RFC 822 email'))});
 
-renderAll();
+setView();renderAll();
 })();
 </script>
 

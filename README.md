@@ -40,6 +40,11 @@ Fonts load from Google Fonts. Without internet access the page falls back to sys
 
 `demo/dashboard.html` is a self-contained version of the v0.3 console (including correlations, the infrastructure graph, tags and the printable report) with fictional sample cases (reserved `.example` domains and documentation IP ranges). Open it directly in a browser; no backend is needed. Uploading an `.eml` there parses and scores it in the browser only, and enrichment results are simulated.
 
+The demo also previews two cross-case views, reachable from the top navigation (and linkable as `#intelligence` and `#detections`). These are not yet in `frontend/index.html`:
+
+- **Intelligence**: every domain seen across cases with its registration age (newly registered domains under 30 days flagged), registrar, name servers, certificate transparency name count and the cases it appeared in, filterable by All / Newly registered / In open cases. It also lists name servers and registrars shared by two or more domains, and indicators recurring in two or more cases. Case IDs link back to the case view.
+- **Detections**: choose cases by scope (Open / Critical + high / All) and tick or untick individual cases to generate one merged Sigma rule, YARA rule or STIX 2.1 bundle with duplicates removed. Sigma output carries ATT&CK tags and the STIX bundle adds attachment-hash indicators. Copy or download as `.yml`, `.yar` or `.json`. Closed cases start unticked, since false reports often contain legitimate (including your own) domains.
+
 ## API
 
 | Method | Path | Purpose |
