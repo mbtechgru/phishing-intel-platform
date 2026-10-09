@@ -52,6 +52,13 @@ Fonts load from Google Fonts. Without internet access the page falls back to sys
 
 The demo also includes the Intelligence and Detections views, computed in the browser from the sample cases.
 
+**Preview (demo only, not yet in `frontend/index.html` or the API):**
+
+- **Check a URL**: analyze a link reported without its email. Defanged input (`hxxp`, `[.]`) is accepted. The link is never opened; it is analyzed as text, with passive lookups only.
+- **Paste message source**: paste the full original (Outlook on the web: View › View message source; Gmail: Show original) when exporting an `.eml` is hard.
+- **URL signals** for every case: raw-IP hosts, `@` destination tricks, redirects through another site (the redirect target becomes an indicator), URL shorteners, login or verification paths, non-standard ports and deeply nested subdomains.
+- **Known-legitimate domains are left out of generated Sigma, YARA and STIX**: brand domains from `rules/brands.json` and your protected domains, such as a Google redirect or a real DocuSign sender. The rule notes what was left out.
+
 ## API
 
 | Method | Path | Purpose |

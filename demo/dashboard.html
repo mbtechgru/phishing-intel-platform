@@ -110,7 +110,7 @@ table.data th:first-child,table.data td:first-child{text-align:left}
 .case{min-width:0;display:flex;flex-direction:column;gap:16px}
 .case-head{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
 .case-title{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
-.case-title h1{font-size:20px;font-weight:600;line-height:1.3;max-width:62ch}
+.case-title h1{font-size:20px;font-weight:600;line-height:1.3;max-width:62ch;overflow-wrap:anywhere}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:13px}
 .kv dt{color:var(--muted)}
 .kv dd{margin:0;overflow-wrap:anywhere}
@@ -182,6 +182,11 @@ table.ioc td.mono{overflow-wrap:anywhere;min-width:180px}
 .intel dl.rd{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;margin:0;font-size:12px}
 .intel dl.rd dt{color:var(--muted)}
 .intel dl.rd dd{margin:0;overflow-wrap:anywhere}
+.alt{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.alt .row2{display:flex;gap:8px;flex-wrap:wrap}
+.alt input[type=text]{flex:1;min-width:0;font:inherit;font-family:var(--font-mono);font-size:12.5px;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.alt textarea{font-family:var(--font-mono);font-size:12px;min-height:110px}
+.alt .hint{font-size:12px;color:var(--muted)}
 .age{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .empty{border:1px dashed var(--line);border-radius:8px;padding:14px;color:var(--muted);font-size:13px}
 
@@ -275,6 +280,20 @@ table.ioc td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
         <span class="ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg></span>
         <span><b>Drop a suspicious .eml to open a case</b><small>Parsed in this browser for the demo. Nothing leaves the page. In production the file is preserved under <span class="mono">cases/&lt;case-id&gt;/original.eml</span> with its SHA-256.</small></span>
       </label>
+      <div class="panel alt" id="altIntake">
+        <div class="tabs" role="tablist"><button role="tab" data-alt="url" aria-selected="true">Check a URL</button><button role="tab" data-alt="src" aria-selected="false">Paste message source</button></div>
+        <form id="urlForm" class="alt-pane" style="display:flex;flex-direction:column;gap:8px">
+          <label for="urlIn" class="label">Reported link</label>
+          <div class="row2"><input type="text" id="urlIn" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="hxxps://login-micros0ft[.]example/verify"><button class="btn" type="submit">Analyze URL</button></div>
+          <span class="hint">For links reported without the email. Defanged input (hxxp, [.]) is fine. PhishScope never opens the link: it analyzes the text and runs passive lookups only.</span>
+        </form>
+        <form id="srcForm" class="alt-pane" hidden style="flex-direction:column;gap:8px">
+          <label for="srcIn" class="label">Full message source, headers included</label>
+          <textarea id="srcIn" spellcheck="false" placeholder="Received: from …&#10;From: …&#10;Subject: …"></textarea>
+          <div class="row2" style="align-items:center"><button class="btn" type="submit">Analyze source</button>
+          <span class="hint">Outlook on the web: … › View › View message source. Gmail: ⋮ › Show original › Copy to clipboard.</span></div>
+        </form>
+      </div>
       <div class="kpis" id="kpis"></div>
     </div>
     <div class="panel chart">
@@ -394,11 +413,40 @@ function displayNameHits(from){
     .map(([t])=>({target:t,sender:dom}));
 }
 
+/* URL signals: apply to links in emails and to reported URLs. The link is analyzed as text, never opened */
+const SHORTENERS=new Set('bit.ly tinyurl.com t.co goo.gl ow.ly is.gd buff.ly rebrand.ly cutt.ly shorturl.at tiny.cc rb.gy s.id t.ly lnkd.in qrco.de'.split(' '));
+const CRED_PATH=/(^|[\/._-])(login|log-in|signin|sign-in|logon|verify|verification|validate|account|password|passwd|reset|unlock|mfa|2fa|otp|sso|oauth|authorize|auth|secure|update-billing|wallet)([\/._?=-]|$)/i;
+const REDIRECT_KEYS=/^(url|u|q|r|redirect|redirect_uri|redirect_url|redir|next|dest|destination|target|to|goto|link|out|continue|returnurl|return_to)$/i;
+const refang=s=>s.trim().replace(/^hxxp/i,'http').replace(/\[\.\]|\(\.\)|\{\.\}|\[dot\]/gi,'.').replace(/\[:\]/g,':').replace(/\[\/\]/g,'/');
+function embeddedUrls(u){const out=[];try{const x=new URL(u);for(const [k,v] of x.searchParams){if(REDIRECT_KEYS.test(k)&&/^https?:\/\//i.test(v))out.push(v)}}catch{}return out}
+function urlSignals(urls){
+  const hit={ip:[],at:[],short:[],redir:[],cred:[],port:[],deep:[]},sig=[];
+  for(const u of urls){let x;try{x=new URL(u)}catch{continue}const h=x.hostname.toLowerCase();
+    if(/^\d{1,3}(\.\d{1,3}){3}$/.test(h)||h.startsWith('['))hit.ip.push(h);
+    if(x.username||x.password)hit.at.push(h);
+    if(SHORTENERS.has(h))hit.short.push(h);
+    const emb=embeddedUrls(u);if(emb.length){try{hit.redir.push(`${h} → ${new URL(emb[0]).hostname}`)}catch{}}
+    if(CRED_PATH.test(x.pathname))hit.cred.push(h+x.pathname);
+    if(x.port&&!['80','443'].includes(x.port))hit.port.push(`${h}:${x.port}`);
+    if(!hit.ip.includes(h)&&h.split('.').length-registrable(h).split('.').length>=3)hit.deep.push(h)}
+  const add=(k,t,p)=>{const v=[...new Set(hit[k])];if(v.length)sig.push({t:`${t}: ${v.slice(0,3).join(', ')}${v.length>3?' …':''}`,p})};
+  add('ip','Link points to a raw IP address instead of a domain',20);
+  add('at','Link hides its real destination after an @',20);
+  add('redir','Link redirects through another site',15);
+  add('short','Link uses a URL shortener that hides the destination',10);
+  add('cred','Link path suggests a login, verification or account page',10);
+  add('port','Link uses a non-standard port',10);
+  add('deep','Link uses deeply nested subdomains',10);
+  return sig;
+}
+
 function score(c){
+  c.urls=[...new Set(c.urls.concat(c.urls.flatMap(embeddedUrls)))].sort();   // redirect targets are indicators too
   const sig=[];const fd=domainOf(c.from),rd=domainOf(c.replyTo);
   if(rd&&fd&&rd!==fd)sig.push({t:`Reply-To domain differs from From (${fd} → ${rd})`,p:25});
   [['spf',20],['dkim',20],['dmarc',25]].forEach(([m,p])=>{if(c.auth[m]==='fail')sig.push({t:`${m.toUpperCase()} failed`,p})});
   if(c.urls.length)sig.push({t:`${c.urls.length} URL(s) found`,p:Math.min(15,c.urls.length*3),cap:'3 each, max 15'});
+  sig.push(...urlSignals(c.urls));
   if(c.attachments.length)sig.push({t:`${c.attachments.length} attachment(s) found`,p:Math.min(20,c.attachments.length*8),cap:'8 each, max 20'});
   const risky={},enc=[];
   c.attachments.forEach(a=>{const k=riskClass(a.name,a.type);if(k)(risky[k]=risky[k]||[]).push(a.name);if(a.encrypted)enc.push(a.name);
@@ -427,6 +475,12 @@ const hex=n=>[...crypto.getRandomValues(new Uint8Array(n))].map(b=>b.toString(16
 const fakeHash=seed=>{let h='',x=0;for(const ch of seed)x=(x*31+ch.charCodeAt(0))>>>0;for(let i=0;i<64;i++){x=(x*1103515245+12345)>>>0;h+=(x>>>24&15).toString(16)}return h};
 
 const CASES=[
+ {id:'20261005-5d0b7e3a',kind:'url',file:'reported-url',received:'2026-10-05T09:41:00Z',status:'new',
+  reported:'https://www.google.com/url?q=https://login.micros0ft-sso.example/common/oauth2/authorize',
+  subject:'Reported URL: hxxps://www[.]google[.]com/url?q=https://login[.]micros0ft-sso[.]example/common/oauth2/authorize',
+  from:'',replyTo:'',to:'',auth:{spf:'none',dkim:'none',dmarc:'none'},
+  urls:['https://www.google.com/url?q=https://login.micros0ft-sso.example/common/oauth2/authorize'],ips:[],attachments:[],tags:['reported-url'],
+  notes:[{at:'2026-10-05T09:44:00Z',who:'C. Marrero',t:'Reported by a user in Sales through Teams; they deleted the email. Link goes through a Google redirect to a Microsoft lookalike.'}]},
  {id:'20261005-a3f91c2e',file:'payroll-deposit-update.eml',received:'2026-10-05T08:14:22Z',status:'investigating',
   subject:'Action required: confirm direct deposit details before the Oct 10 payroll run',
   from:'"HR Payroll" <payroll@hr-payroll-portal.example>',replyTo:'payroll-desk@mailbox-relay.example.net',to:'j.alvarez@corp.example',
@@ -472,6 +526,8 @@ const INTEL={
  'cdn.hr-payroll-portal.example':{parent:'hr-payroll-portal.example'},
  'secure-docs-share.example':{created:'2026-09-21',registrar:'Example Registrar, LLC',status:['ok'],ns:['ns-a.cheapdns.example','ns-b.cheapdns.example'],ct:['secure-docs-share.example','files.secure-docs-share.example','www.secure-docs-share.example']},
  'files.secure-docs-share.example':{parent:'secure-docs-share.example'},
+ 'micros0ft-sso.example':{created:'2026-10-03',registrar:'Registrar Sample Inc.',status:['addPeriod','clientTransferProhibited'],ns:['ns1.bulletdns.example'],ct:['micros0ft-sso.example','login.micros0ft-sso.example']},
+ 'login.micros0ft-sso.example':{parent:'micros0ft-sso.example'},
  'corp-sso-verify.example':{created:'2026-10-02',registrar:'Registrar Sample Inc.',status:['clientHold'],ns:['ns1.bulletdns.example'],ct:['corp-sso-verify.example','owa.corp-sso-verify.example']},
  'esign-review.example':{created:'2026-08-30',registrar:'Example Registrar, LLC',status:['ok'],ns:['ns1.fastpark-dns.example'],ct:['esign-review.example','www.esign-review.example']},
  'northwind-billing.example':{created:'2026-09-12',registrar:'Registrar Sample Inc.',status:['clientHold'],ns:['ns1.bulletdns.example'],ct:['northwind-billing.example','portal.northwind-billing.example']},
@@ -568,8 +624,14 @@ function renderQueue(){
 }
 
 /* Detection artifacts — formats mirror sigma_for / yara_for / stix_bundle */
+/* Known-legitimate domains (brands in rules/brands.json and your protected domains) never go into generated detections:
+   a Google redirect or a real DocuSign sender would otherwise block legitimate mail */
+const knownLegit=d=>targets().some(t=>t[3].has(registrable(d)));
+const detDomains=c=>c.domains.filter(d=>!knownLegit(d));
+const detSender=c=>{const a=addrOf(c.from);return a&&!knownLegit(a.split('@').pop())?a:''};
+const legitNote=ds=>{const x=[...new Set(ds.filter(knownLegit))];return x.length?`# Not included (known legitimate): ${x.join(', ')}\n`:''};
 function sigma(c){
-  return `title: PhishScope Case ${c.id}
+  return `${legitNote(c.domains)}title: PhishScope Case ${c.id}
 id: ${c.uuid||(c.uuid=crypto.randomUUID?crypto.randomUUID():hex(16))}
 status: experimental
 description: Indicators generated from an authorized defensive phishing investigation
@@ -577,17 +639,17 @@ logsource:
   category: email
 detection:
   selection:
-    sender|contains:
-      - ${JSON.stringify(c.from)}
-    url_domain|contains:
-${c.domains.length?c.domains.map(d=>'      - '+JSON.stringify(d)).join('\n'):'      - "none"'}
+${detSender(c)?`    sender|contains:
+      - ${JSON.stringify(detSender(c))}
+`:''}    url_domain|contains:
+${detDomains(c).length?detDomains(c).map(d=>'      - '+JSON.stringify(d)).join('\n'):'      - "none"'}
   condition: selection
 falsepositives:
   - Legitimate messages sharing infrastructure
 level: ${c.severity}`;
 }
 function yara(c){
-  let s=c.domains.slice(0,20).map((d,i)=>`    $domain${i} = "${d}" ascii nocase`).concat(c.attachments.slice(0,20).map((a,i)=>`    $hash${i} = "${a.sha}" ascii`));
+  let s=detDomains(c).slice(0,20).map((d,i)=>`    $domain${i} = "${d}" ascii nocase`).concat(c.attachments.slice(0,20).map((a,i)=>`    $hash${i} = "${a.sha}" ascii`));
   if(!s.length)s=[`    $case = "${c.id}" ascii`];
   return `rule PhishScope_${c.id.replace(/[^A-Za-z0-9_]/g,'_')} {
   meta:
@@ -601,7 +663,7 @@ ${s.join('\n')}
 function stix(c){
   const now=new Date().toISOString().replace(/\.\d+Z$/,'Z');const id=()=>crypto.randomUUID?crypto.randomUUID():hex(16);
   const ind=(name,pattern)=>({type:'indicator',spec_version:'2.1',id:'indicator--'+id(),created:now,modified:now,name,pattern_type:'stix',pattern,valid_from:now});
-  return JSON.stringify({type:'bundle',id:'bundle--'+id(),objects:[...c.domains.map(d=>ind('PhishScope domain indicator',`[domain-name:value = '${d}']`)),...c.ips.map(ip=>ind('PhishScope IP indicator',`[ipv4-addr:value = '${ip}']`))]},null,2);
+  return JSON.stringify({type:'bundle',id:'bundle--'+id(),objects:[...detDomains(c).map(d=>ind('PhishScope domain indicator',`[domain-name:value = '${d}']`)),...c.ips.map(ip=>ind('PhishScope IP indicator',`[ipv4-addr:value = '${ip}']`))]},null,2);
 }
 
 function authCell(k,v){const m={pass:['var(--good)','✓'],fail:['var(--crit)','✕'],none:['var(--muted)','–'],softfail:['var(--warn)','!']}[v]||['var(--muted)','?'];
@@ -744,8 +806,8 @@ function renderCase(){
       </div>
     </div>
     <dl class="kv">
-      <dt>Received</dt><dd>${fmtTime(c.received)} · reported to <span class="mono">${E(c.to)}</span></dd>
-      <dt>Evidence</dt><dd><span class="mono">cases/${c.id}/original.eml</span> · ${E(c.file)}</dd>
+      <dt>Received</dt><dd>${fmtTime(c.received)}${c.to?` · reported to <span class="mono">${E(c.to)}</span>`:''}</dd>
+      <dt>Evidence</dt><dd>${c.kind==='url'?'Reported URL, no message to preserve':`<span class="mono">cases/${c.id}/original.eml</span> · ${E(c.file)}`}</dd>
       <dt>SHA-256</dt><dd class="mono">${c.sha}</dd>
       <dt>Tags</dt><dd><div class="tags" id="tagBox">${c.tags.map(t=>`<span class="tagp">${E(t)}<button data-tag="${E(t)}" aria-label="Remove tag ${E(t)}">×</button></span>`).join('')}<input id="tagIn" maxlength="40" placeholder="Add tag, press Enter" aria-label="Add tag"></div></dd>
     </dl>
@@ -775,12 +837,14 @@ function renderCase(){
       <ul class="signals">${c.signals.length?c.signals.map(s=>`<li><span>${E(s.t)}${s.cap?` <span class="cap">(${s.cap})</span>`:''}</span><span class="pts">+${s.p}</span></li>`).join(''):'<li><span class="muted">No phishing signals matched.</span><span class="pts">0</span></li>'}</ul>
     </div>
     <div class="panel sec">
-      <h2>Sender authentication</h2>
+      ${c.kind==='url'?`<h2>Submission</h2>
+      <div class="empty">Submitted as a URL, so there is no sender, header or SPF/DKIM/DMARC evidence. If the reporter still has the email, analyze it as an .eml or pasted source too.</div>
+      <dl class="kv"><dt>Reported link</dt><dd class="mono">${E(defang(c.reported))}</dd>${c.urls.length>1?`<dt>Redirects to</dt><dd class="mono">${c.urls.filter(u=>u!==c.reported).map(u=>E(defang(u))).join('<br>')}</dd>`:''}</dl>`:`<h2>Sender authentication</h2>
       <div class="auth">${['spf','dkim','dmarc'].map(k=>authCell(k,c.auth[k])).join('')}</div>
       <div class="addr">
         <span>From</span><span class="mono">${E(c.from).replace(E(fd),mis?`<span class="mismatch">${E(fd)}</span>`:E(fd))}</span>
         <span>Reply-To</span><span class="mono">${c.replyTo?(mis?E(c.replyTo).replace(E(rd),`<span class="mismatch">${E(rd)}</span>`):E(c.replyTo)):'<span class="muted">not set</span>'}</span>
-      </div>
+      </div>`}
       <div style="display:flex;flex-direction:column;gap:6px"><span class="label">MITRE ATT&amp;CK</span>
         <div class="mitre">${c.mitre.map(m=>`<a href="https://attack.mitre.org/techniques/${m.id.replace('.','/')}/" target="_blank" rel="noopener"><b>${m.id}</b>${m.name}</a>`).join('')}</div>
       </div>
@@ -915,13 +979,14 @@ function renderIntel(){
 const addrOf=v=>{const m=String(v||'').match(/<?([^<>\s"]+@[^<>\s"]+)>?\s*$/);return m?m[1].toLowerCase():''};
 const stableUuid=s=>{const h=fakeHash(s);return `${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`};
 const uniq=a=>[...new Set(a)].sort();
-function mergedIocs(cs){return{senders:uniq(cs.map(c=>addrOf(c.from)).filter(Boolean)),domains:uniq(cs.flatMap(c=>c.domains)),ips:uniq(cs.flatMap(c=>c.ips)),
+function mergedIocs(cs){return{senders:uniq(cs.map(detSender).filter(Boolean)),domains:uniq(cs.flatMap(detDomains)),excluded:uniq(cs.flatMap(c=>c.domains).filter(knownLegit)),ips:uniq(cs.flatMap(c=>c.ips)),
   hashes:uniq(cs.flatMap(c=>c.attachments.map(a=>a.sha))),mitre:uniq(cs.flatMap(c=>c.mitre.map(m=>m.id)))}}
 function sigmaAll(cs,m){
   const sel=[];
   if(m.senders.length)sel.push(['sender',`    sender|contains:\n${m.senders.map(v=>'      - '+JSON.stringify(v)).join('\n')}`]);
   if(m.domains.length)sel.push(['url',`    url_domain|contains:\n${m.domains.map(v=>'      - '+JSON.stringify(v)).join('\n')}`]);
-  return `title: PhishScope combined indicators (${cs.length} case${cs.length>1?'s':''})
+  if(!sel.length)sel.push(['selection','    url_domain|contains:\n      - "none"']);
+  return `${m.excluded.length?`# Not included (known legitimate): ${m.excluded.join(', ')}\n`:''}title: PhishScope combined indicators (${cs.length} case${cs.length>1?'s':''})
 id: ${stableUuid(cs.map(c=>c.id).join(','))}
 status: experimental
 description: Indicators merged from authorized defensive phishing investigations ${cs.map(c=>c.id).join(', ')}
@@ -1014,7 +1079,9 @@ async function walk(part,out){
 async function analyzeFile(f){
   if(!/\.eml$/i.test(f.name)){toast('Choose an .eml file');return}
   if(f.size>20*1024*1024){toast('File too large (20 MB max)');return}
-  const buf=await f.arrayBuffer();const raw=new TextDecoder('latin1').decode(buf);
+  const buf=await f.arrayBuffer();await analyzeRaw(new TextDecoder('latin1').decode(buf),buf,f.name);
+}
+async function analyzeRaw(raw,buf,name){
   const msg=splitMsg(raw);const out={attachments:[],text:[]};await walk(msg,out);
   const corpus=Object.values(msg.hdrs).join('\n')+'\n'+out.text.join('\n');
   const urls=[...new Set((corpus.match(/https?:\/\/[^\s<>"']+/gi)||[]).map(u=>u.replace(/[.,);\]]+$/,'')))].sort();
@@ -1023,12 +1090,30 @@ async function analyzeFile(f){
   const ar=(msg.hdrs['authentication-results']||'').toLowerCase();
   const res=m=>{const x=ar.match(new RegExp(m+'=(\\w+)'));return x?x[1]:'none'};
   const now=new Date();const id=now.toISOString().slice(0,10).replace(/-/g,'')+'-'+hex(4);
-  const c=score({id,file:f.name.replace(/[^A-Za-z0-9._-]+/g,'_'),received:now.toISOString(),status:'new',uploaded:true,
+  const c=score({id,file:name.replace(/[^A-Za-z0-9._-]+/g,'_'),received:now.toISOString(),status:'new',uploaded:true,
     subject:decodeWord(msg.hdrs['subject'])||'(no subject)',from:decodeWord(msg.hdrs['from']||''),replyTo:decodeWord(msg.hdrs['reply-to']||''),to:decodeWord(msg.hdrs['to']||'unknown'),
     auth:{spf:res('spf'),dkim:res('dkim'),dmarc:res('dmarc')},urls,ips,attachments:out.attachments,notes:[],tags:[],sha:await sha256Hex(buf)});
-  CASES.unshift(c);state.sel=c.id;state.filter='all';state.iocTab='urls';renderAll();toast(`Case ${c.id} opened`);
-  $('#case').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+  openNew(c);
 }
+/* Alternate intake: reported URL (never fetched) or pasted message source */
+function openNew(c){CASES.unshift(c);state.sel=c.id;state.filter='all';state.iocTab='urls';renderAll();toast(`Case ${c.id} opened`);
+  $('#case').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'})}
+$('#altIntake').querySelectorAll('[data-alt]').forEach(b=>b.onclick=()=>{
+  $('#altIntake').querySelectorAll('[data-alt]').forEach(o=>o.setAttribute('aria-selected',o===b));
+  ['url','src'].forEach(k=>{const p=$('#'+k+'Form');p.hidden=b.dataset.alt!==k;p.style.display=b.dataset.alt===k?'flex':'none'})});
+$('#urlForm').onsubmit=async e=>{e.preventDefault();
+  let u=refang($('#urlIn').value);if(!u){toast('Paste a link');return}
+  if(!/^[a-z][a-z0-9+.-]*:/i.test(u))u='http://'+u;
+  let x;try{x=new URL(u)}catch{toast('That is not a valid URL');return}
+  if(!/^https?:$/.test(x.protocol)){toast('Only http and https links can be analyzed');return}
+  const now=new Date(),id=now.toISOString().slice(0,10).replace(/-/g,'')+'-'+hex(4),h=x.hostname.toLowerCase();
+  const c=score({id,kind:'url',reported:x.href,file:'reported-url',received:now.toISOString(),status:'new',uploaded:true,
+    subject:'Reported URL: '+defang(x.href).slice(0,140),from:'',replyTo:'',to:'',auth:{spf:'none',dkim:'none',dmarc:'none'},
+    urls:[x.href],ips:/^\d{1,3}(\.\d{1,3}){3}$/.test(h)?[h]:[],attachments:[],notes:[],tags:['reported-url'],sha:await sha256Hex(new TextEncoder().encode(x.href))});
+  $('#urlIn').value='';openNew(c)};
+$('#srcForm').onsubmit=async e=>{e.preventDefault();const raw=$('#srcIn').value;
+  if(!/^(received|from|subject|return-path|message-id|date|to|delivered-to|x-[\w-]+|authentication-results|mime-version):/im.test(raw)){toast('That does not look like message source. Copy the full original, headers included');return}
+  try{const t=raw.replace(/\r?\n/g,'\r\n');await analyzeRaw(t,new TextEncoder().encode(t),'pasted-source.eml');$('#srcIn').value=''}catch{toast('Could not parse that source as RFC 822 email')}};
 const drop=$('#drop'),fi=$('#file');
 fi.addEventListener('change',()=>{if(fi.files[0])analyzeFile(fi.files[0]).catch(()=>toast('Could not parse that file as RFC 822 email'));fi.value=''});
 ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));
